@@ -15,6 +15,38 @@ static NSString* BBShellQuote(NSString* value) {
 
 static NSString* const kDefaultUpdateFeedURL = @"https://raw.githubusercontent.com/kiro-browser/browser-core/dev/updates/manifest.json";
 
+static NSString* BBBodySnippet(NSData* data) {
+    if (!data.length) return @"";
+    NSUInteger length = MIN((NSUInteger)500, data.length);
+    NSData* prefix = [data subdataWithRange:NSMakeRange(0, length)];
+    NSString* text = [[NSString alloc] initWithData:prefix encoding:NSUTF8StringEncoding] ?: @"";
+    text = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    return text.length ? text : @"The response was not UTF-8 text.";
+}
+
+static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
+    if (!value.length) return value;
+    NSURLComponents* components = [NSURLComponents componentsWithString:value];
+    if (!components) return value;
+
+    NSString* host = components.host.lowercaseString;
+    if (![host isEqualToString:@"github.com"]) return value;
+
+    NSArray<NSString*>* parts = [components.path componentsSeparatedByString:@"/"];
+    NSMutableArray<NSString*>* clean = [NSMutableArray new];
+    for (NSString* part in parts) {
+        if (part.length) [clean addObject:part];
+    }
+    if (clean.count < 5 || ![clean[2] isEqualToString:@"blob"]) return value;
+
+    NSString* owner = clean[0];
+    NSString* repo = clean[1];
+    NSString* branch = clean[3];
+    NSArray<NSString*>* pathParts = [clean subarrayWithRange:NSMakeRange(4, clean.count - 4)];
+    NSString* rawPath = [pathParts componentsJoinedByString:@"/"];
+    return [NSString stringWithFormat:@"https://raw.githubusercontent.com/%@/%@/%@/%@", owner, repo, branch, rawPath];
+}
+
 @interface UpdateManager ()
 @property (strong) NSURLSession* session;
 @property (assign) BOOL checking;
@@ -58,7 +90,7 @@ static NSString* const kDefaultUpdateFeedURL = @"https://raw.githubusercontent.c
     self.checking = YES;
 
     SettingsManager* settings = [SettingsManager profileShared];
-    NSString* feedURLString = settings.updateFeedURL.length ? settings.updateFeedURL : kDefaultUpdateFeedURL;
+    NSString* feedURLString = BBNormalizeUpdateFeedURL(settings.updateFeedURL.length ? settings.updateFeedURL : kDefaultUpdateFeedURL);
     NSURL* feedURL = [NSURL URLWithString:feedURLString];
     if (!feedURL) {
         self.checking = NO;
@@ -81,13 +113,29 @@ static NSString* const kDefaultUpdateFeedURL = @"https://raw.githubusercontent.c
             return;
         }
 
+        NSHTTPURLResponse* http = [response isKindOfClass:[NSHTTPURLResponse class]] ? (NSHTTPURLResponse*)response : nil;
+        if (http && (http.statusCode < 200 || http.statusCode >= 300)) {
+            if (prompt) {
+                NSString* snippet = BBBodySnippet(data);
+                NSString* message = [NSString stringWithFormat:@"The update server returned HTTP %@ for:\n%@%@%@",
+                                     @(http.statusCode), feedURLString, snippet.length ? @"\n\nResponse:\n" : @"", snippet];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [self presentAlert:@"Update Check Failed" message:message];
+                });
+            }
+            return;
+        }
+
         NSError* jsonError = nil;
         NSDictionary* manifest = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
         if (![manifest isKindOfClass:[NSDictionary class]]) {
             if (prompt) {
+                NSString* snippet = BBBodySnippet(data);
+                NSString* message = [NSString stringWithFormat:@"The update manifest was not valid JSON.\n\nURL:\n%@%@%@",
+                                     feedURLString, snippet.length ? @"\n\nResponse:\n" : @"", snippet];
                 dispatch_async(dispatch_get_main_queue(), ^{
                     [self presentAlert:@"Update Check Failed"
-                               message:@"The update manifest was not valid JSON."];
+                               message:message];
                 });
             }
             return;
