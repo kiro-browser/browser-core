@@ -116,13 +116,14 @@ ZIP_PATH="$DIST_DIR/$BASE_NAME.app.zip"
 MANIFEST_PATH="$DIST_DIR/manifest.json"
 TMP_PKG="$DIST_DIR/.$BASE_NAME.pkg.$$"
 TMP_ZIP="$DIST_DIR/.$BASE_NAME.app.zip.$$"
-STAGE_DIR="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}BuildBrowserPackage.XXXXXX")"
+STAGE_DIR="$(/usr/bin/mktemp -d "/private/tmp/BuildBrowserPackage.XXXXXX")"
 PAYLOAD_DIR="$STAGE_DIR/payload"
 APP_STAGE="$PAYLOAD_DIR/Applications"
 SCRIPTS_DIR="$STAGE_DIR/scripts"
 COMPONENT_PLIST="$STAGE_DIR/components.plist"
 
 export COPYFILE_DISABLE=1
+trap '/bin/rm -rf "$STAGE_DIR" "$TMP_PKG" "$TMP_ZIP"' EXIT
 
 mkdir -p "$DIST_DIR" "$APP_STAGE" "$SCRIPTS_DIR"
 
