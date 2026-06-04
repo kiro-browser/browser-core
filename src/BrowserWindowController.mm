@@ -574,6 +574,13 @@ static const CGFloat kFindBarH      = 36.0;
     [self rebuildTabStrip];
 }
 
+- (void)openURLInNewTab:(NSString*)url {
+    if (!url.length) return;
+    [_tabManager newTabWithURL:url];
+    [self rebuildTabStrip];
+    [self.window makeKeyAndOrderFront:nil];
+}
+
 - (void)goBack:(id)_    { [_tabManager.activeTab.webView goBack]; }
 - (void)goForward:(id)_ { [_tabManager.activeTab.webView goForward]; }
 - (void)goHome:(id)_    { [_tabManager loadURL:[SettingsManager profileShared].homepage inTab:_tabManager.activeTab]; }

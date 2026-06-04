@@ -11,6 +11,7 @@
 @property (readonly) Profile* profile;
 - (NSDictionary*)sessionState;
 - (void)restoreWindowState:(NSDictionary*)state;
+- (void)openURLInNewTab:(NSString*)url;
 
 // Actions reachable from menu / keyboard
 - (void)newTab:(id)sender;

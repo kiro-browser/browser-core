@@ -4,16 +4,21 @@
 #import "ProfileManager.h"
 #import "BookmarkManager.h"
 #import "HistoryManager.h"
+#import "DefaultBrowserManager.h"
 #import <Cocoa/Cocoa.h>
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 @property(strong) NSMutableArray<BrowserWindowController*> *windows;
+@property(strong) NSMutableArray<NSURL*> *pendingOpenURLs;
 @end
+
+static NSString* const kDefaultBrowserPromptSeen = @"BuildBrowser.defaultBrowserPromptSeen";
 
 @implementation AppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification *)_ {
   self.windows = [NSMutableArray new];
+  if (!self.pendingOpenURLs) self.pendingOpenURLs = [NSMutableArray new];
   [self buildMenu];
   [self applyApplicationIcon];
   
@@ -27,6 +32,8 @@
   [self.windows addObject:wc];
   [wc showWindow:nil];
   [wc restoreWindowState:session];
+  [self openPendingURLsIfNeeded];
+  [self showDefaultBrowserPromptIfNeededForWindow:wc.window];
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
     if ([SettingsManager profileShared].autoCheckUpdates) {
       [[UpdateManager shared] checkForUpdatesSilently];
@@ -58,6 +65,69 @@
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)_ {
   return YES;
+}
+
+- (void)application:(NSApplication*)_ openURLs:(NSArray<NSURL*>*)urls {
+  if (!urls.count) return;
+  if (!self.windows.count) {
+    if (!self.pendingOpenURLs) self.pendingOpenURLs = [NSMutableArray new];
+    [self.pendingOpenURLs addObjectsFromArray:urls];
+    return;
+  }
+  [self openURLsInBrowser:urls];
+}
+
+- (void)openPendingURLsIfNeeded {
+  if (!self.pendingOpenURLs.count) return;
+  NSArray<NSURL*>* urls = self.pendingOpenURLs.copy;
+  [self.pendingOpenURLs removeAllObjects];
+  [self openURLsInBrowser:urls];
+}
+
+- (void)openURLsInBrowser:(NSArray<NSURL*>*)urls {
+  BrowserWindowController* wc = [self firstBrowserWindowController];
+  if (!wc) return;
+  for (NSURL* url in urls) {
+    if (![url isKindOfClass:[NSURL class]]) continue;
+    [wc openURLInNewTab:url.absoluteString];
+  }
+  [NSApp activateIgnoringOtherApps:YES];
+}
+
+- (BrowserWindowController*)firstBrowserWindowController {
+  for (BrowserWindowController* candidate in self.windows) {
+    if ([candidate isKindOfClass:[BrowserWindowController class]]) return candidate;
+  }
+  return nil;
+}
+
+- (void)showDefaultBrowserPromptIfNeededForWindow:(NSWindow*)window {
+  if (!window) return;
+  NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
+  if ([defaults boolForKey:kDefaultBrowserPromptSeen]) return;
+  if ([DefaultBrowserManager isDefaultBrowser]) return;
+
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(700 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+    if ([DefaultBrowserManager isDefaultBrowser]) return;
+    NSAlert* alert = [NSAlert new];
+    alert.messageText = @"Make BuildBrowser your default browser?";
+    alert.informativeText = @"Links from other apps will open in BuildBrowser.";
+    [alert addButtonWithTitle:@"Make Default"];
+    [alert addButtonWithTitle:@"Not Now"];
+    [alert beginSheetModalForWindow:window completionHandler:^(NSModalResponse response) {
+      [defaults setBool:YES forKey:kDefaultBrowserPromptSeen];
+      if (response != NSAlertFirstButtonReturn) return;
+
+      NSError* error = nil;
+      if (![DefaultBrowserManager setAsDefaultBrowserWithError:&error]) {
+        NSAlert* failure = [NSAlert new];
+        failure.messageText = @"Could not update default browser";
+        failure.informativeText = error.localizedDescription ?: @"Open macOS System Settings and choose BuildBrowser as the default browser.";
+        [failure addButtonWithTitle:@"OK"];
+        [failure beginSheetModalForWindow:window completionHandler:nil];
+      }
+    }];
+  });
 }
 
 // ── Menu bar

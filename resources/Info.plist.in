@@ -21,6 +21,21 @@
   <string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
   <key>CFBundleVersion</key>
   <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}.web</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>http</string>
+        <string>https</string>
+        <string>buildbrowser</string>
+      </array>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+    </dict>
+  </array>
   <key>NSHumanReadableCopyright</key>
   <string>${MACOSX_BUNDLE_COPYRIGHT}</string>
   <key>NSAppTransportSecurity</key>

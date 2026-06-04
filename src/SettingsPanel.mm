@@ -2,6 +2,7 @@
 #import "HistoryManager.h"
 #import "ProfileManager.h"
 #import "UpdateManager.h"
+#import "DefaultBrowserManager.h"
 
 // ── SettingsPanel ─────────────────────────────────────────────────────────────
 // macOS-style settings: sidebar nav on the left, content pane on the right.
@@ -62,6 +63,8 @@ static NSTextField* makeRowLabel(NSString* text) {
     // General
     NSTextField*  _homepageField;
     NSTextField*  _searchField;
+    NSTextField*  _defaultBrowserStatusLabel;
+    NSButton*     _defaultBrowserButton;
     NSTextView*   _launchersTextView;
     // Privacy
     NSButton*     _jsToggle;
@@ -234,6 +237,26 @@ static NSTextField* makeRowLabel(NSString* text) {
     hint.font      = [NSFont systemFontOfSize:10];
     hint.textColor = [NSColor secondaryLabelColor];
     [box2 addSubview:hint];
+    y -= 84;
+
+    // Default browser group
+    NSView* box3 = makeGroupBox(16, y - 58, W - 32, 58);
+    [v addSubview:box3];
+
+    NSTextField* dbLabel = makeRowLabel(@"Default Browser");
+    dbLabel.frame = NSMakeRect(16, 30, 160, 18);
+    [box3 addSubview:dbLabel];
+
+    _defaultBrowserStatusLabel = [NSTextField labelWithString:@""];
+    _defaultBrowserStatusLabel.frame = NSMakeRect(16, 12, W - 32 - 150, 16);
+    _defaultBrowserStatusLabel.font = [NSFont systemFontOfSize:11];
+    _defaultBrowserStatusLabel.textColor = [NSColor secondaryLabelColor];
+    [box3 addSubview:_defaultBrowserStatusLabel];
+
+    _defaultBrowserButton = [NSButton buttonWithTitle:@"Make Default" target:self action:@selector(makeDefaultBrowser:)];
+    _defaultBrowserButton.frame = NSMakeRect(W - 32 - 118, 17, 110, 24);
+    _defaultBrowserButton.bezelStyle = NSBezelStyleRounded;
+    [box3 addSubview:_defaultBrowserButton];
 
     return v;
 }
@@ -447,6 +470,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     _adBlockToggle.state           = s.adBlockEnabled    ? NSControlStateValueOn : NSControlStateValueOff;
     _autoCheckToggle.state         = s.autoCheckUpdates  ? NSControlStateValueOn : NSControlStateValueOff;
     _bookmarksBarToggle.state      = s.showBookmarksBar  ? NSControlStateValueOn : NSControlStateValueOff;
+    [self reloadDefaultBrowserStatus];
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -481,6 +505,28 @@ static NSTextField* makeRowLabel(NSString* text) {
     s.updateFeedURL = updateFeed.length ? updateFeed : @"http://127.0.0.1:8787/manifest.json";
     s.autoCheckUpdates = (_autoCheckToggle.state == NSControlStateValueOn);
     [[UpdateManager shared] checkForUpdates];
+}
+
+- (void)reloadDefaultBrowserStatus {
+    BOOL isDefault = [DefaultBrowserManager isDefaultBrowser];
+    _defaultBrowserStatusLabel.stringValue = [DefaultBrowserManager statusText];
+    _defaultBrowserButton.enabled = !isDefault;
+    _defaultBrowserButton.title = isDefault ? @"Default" : @"Make Default";
+}
+
+- (void)makeDefaultBrowser:(id)_ {
+    NSError* error = nil;
+    if ([DefaultBrowserManager setAsDefaultBrowserWithError:&error]) {
+        [self reloadDefaultBrowserStatus];
+        return;
+    }
+
+    NSAlert* a = [NSAlert new];
+    a.messageText = @"Could not update default browser";
+    a.informativeText = error.localizedDescription ?: @"Open macOS System Settings and choose BuildBrowser as the default browser.";
+    [a addButtonWithTitle:@"OK"];
+    [a beginSheetModalForWindow:self.window completionHandler:nil];
+    [self reloadDefaultBrowserStatus];
 }
 
 - (NSString*)textFromLaunchers:(NSDictionary*)launchers {

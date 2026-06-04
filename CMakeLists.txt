@@ -32,6 +32,7 @@ add_executable(BuildBrowser MACOSX_BUNDLE
     src/DownloadsPanel.mm
     src/ContentBlocker.mm
     src/UpdateManager.mm
+    src/DefaultBrowserManager.mm
     resources/BuildBrowser.icns
 )
 
@@ -43,6 +44,7 @@ target_link_libraries(BuildBrowser PRIVATE
     "-framework Foundation"
     "-framework Security"
     "-framework UniformTypeIdentifiers"
+    "-framework CoreServices"
 )
 
 set_target_properties(BuildBrowser PROPERTIES
