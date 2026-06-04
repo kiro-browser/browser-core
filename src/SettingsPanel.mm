@@ -4,6 +4,8 @@
 #import "UpdateManager.h"
 #import "DefaultBrowserManager.h"
 
+static NSString* const kDefaultUpdateFeedURL = @"https://raw.githubusercontent.com/kiro-browser/browser-core/dev/updates/manifest.json";
+
 // ── SettingsPanel ─────────────────────────────────────────────────────────────
 // macOS-style settings: sidebar nav on the left, content pane on the right.
 @interface SettingsPanel : NSWindowController <NSTableViewDataSource, NSTableViewDelegate>
@@ -383,8 +385,8 @@ static NSTextField* makeRowLabel(NSString* text) {
     checkNow.frame = NSMakeRect(W - 32 - 110, 8, 102, 24);
     [box addSubview:checkNow];
 
-    NSTextField* hint = [NSTextField labelWithString:@"Default: http://127.0.0.1:8787/manifest.json"];
-    hint.frame = NSMakeRect(24, 48, 260, 16);
+    NSTextField* hint = [NSTextField labelWithString:@"Default: GitHub public update manifest"];
+    hint.frame = NSMakeRect(24, 48, 280, 16);
     hint.font = [NSFont systemFontOfSize:10];
     hint.textColor = [NSColor secondaryLabelColor];
     [v addSubview:hint];
@@ -485,7 +487,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     s.searchEngineURL   = searchURL;
     s.domainLaunchers   = [self launchersFromText:_launchersTextView.string];
     NSString* updateFeed = [_updateFeedField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    s.updateFeedURL     = updateFeed.length ? updateFeed : @"http://127.0.0.1:8787/manifest.json";
+    s.updateFeedURL     = updateFeed.length ? updateFeed : kDefaultUpdateFeedURL;
     s.javascriptEnabled = (_jsToggle.state             == NSControlStateValueOn);
     s.blockPopups       = (_popupToggle.state           == NSControlStateValueOn);
     s.privateBrowsing   = (_privateToggle.state         == NSControlStateValueOn);
@@ -502,7 +504,7 @@ static NSTextField* makeRowLabel(NSString* text) {
 - (void)checkNowForUpdates:(id)_ {
     SettingsManager* s = [SettingsManager profileShared];
     NSString* updateFeed = [_updateFeedField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    s.updateFeedURL = updateFeed.length ? updateFeed : @"http://127.0.0.1:8787/manifest.json";
+    s.updateFeedURL = updateFeed.length ? updateFeed : kDefaultUpdateFeedURL;
     s.autoCheckUpdates = (_autoCheckToggle.state == NSControlStateValueOn);
     [[UpdateManager shared] checkForUpdates];
 }

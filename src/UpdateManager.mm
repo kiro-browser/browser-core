@@ -13,6 +13,8 @@ static NSString* BBShellQuote(NSString* value) {
     return [NSString stringWithFormat:@"'%@'", [value stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"]];
 }
 
+static NSString* const kDefaultUpdateFeedURL = @"https://raw.githubusercontent.com/kiro-browser/browser-core/dev/updates/manifest.json";
+
 @interface UpdateManager ()
 @property (strong) NSURLSession* session;
 @property (assign) BOOL checking;
@@ -56,7 +58,7 @@ static NSString* BBShellQuote(NSString* value) {
     self.checking = YES;
 
     SettingsManager* settings = [SettingsManager profileShared];
-    NSString* feedURLString = settings.updateFeedURL.length ? settings.updateFeedURL : @"http://127.0.0.1:8787/manifest.json";
+    NSString* feedURLString = settings.updateFeedURL.length ? settings.updateFeedURL : kDefaultUpdateFeedURL;
     NSURL* feedURL = [NSURL URLWithString:feedURLString];
     if (!feedURL) {
         self.checking = NO;

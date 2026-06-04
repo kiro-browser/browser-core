@@ -11,7 +11,8 @@ static NSString* const kBookmarksBar    = @"KBrowser.showBookmarksBar";
 static NSString* const kAdBlock         = @"KBrowser.adBlockEnabled";
 static NSString* const kAutoCheckUpdates = @"KBrowser.autoCheckUpdates";
 static NSString* const kDefaultHomepage = @"buildbrowser://start";
-static NSString* const kDefaultUpdateFeed = @"http://127.0.0.1:8787/manifest.json";
+static NSString* const kLegacyLocalUpdateFeed = @"http://127.0.0.1:8787/manifest.json";
+static NSString* const kDefaultUpdateFeed = @"https://raw.githubusercontent.com/kiro-browser/browser-core/dev/updates/manifest.json";
 
 static NSDictionary* DefaultDomainLaunchers(void) {
     return @{
@@ -84,6 +85,8 @@ static NSDictionary* DefaultDomainLaunchers(void) {
         _settings[kHomepage] = kDefaultHomepage;
     NSString* updateFeed = _settings[kUpdateFeedURL];
     if (![updateFeed isKindOfClass:[NSString class]] || !updateFeed.length)
+        _settings[kUpdateFeedURL] = kDefaultUpdateFeed;
+    else if ([updateFeed isEqualToString:kLegacyLocalUpdateFeed])
         _settings[kUpdateFeedURL] = kDefaultUpdateFeed;
 }
 

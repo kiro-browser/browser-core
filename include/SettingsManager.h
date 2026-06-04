@@ -10,7 +10,7 @@
 @property (copy) NSString* homepage;        // default: https://start.duckduckgo.com
 @property (copy) NSString* searchEngineURL; // default: https://duckduckgo.com/?q=%@
 @property (copy) NSDictionary* domainLaunchers; // alias -> { url, search }
-@property (copy) NSString* updateFeedURL;   // default: http://127.0.0.1:8787/manifest.json
+@property (copy) NSString* updateFeedURL;   // default: public GitHub raw manifest URL
 
 // Privacy
 @property (assign) BOOL javascriptEnabled;

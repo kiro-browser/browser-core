@@ -55,6 +55,54 @@ To build and install in one command:
 The same command also writes `dist/BuildBrowser-<version>-<build>.app.zip`,
 which can be used by the built-in updater manifest as the app bundle archive.
 
+To generate the auto-updater manifest at the same time, pass the public URL
+where the `dist` files will be hosted:
+
+```bash
+./package.sh --base-url=https://example.com/buildbrowser
+```
+
+Upload these files from `dist/` to that URL:
+
+- `manifest.json`
+- `BuildBrowser-<version>-<build>.app.zip`
+
+Then set Settings -> Updates -> Manifest URL to:
+
+```text
+https://example.com/buildbrowser/manifest.json
+```
+
+### Git-Backed Updates
+
+If you want the git repo to host the updater manifest and archive, use:
+
+```bash
+./package.sh --git-updates
+```
+
+For this repo, that writes:
+
+```text
+updates/manifest.json
+updates/BuildBrowser-<version>-<build>.app.zip
+```
+
+Commit and push those files. Then set Settings -> Updates -> Manifest URL to:
+
+```text
+https://raw.githubusercontent.com/kiro-browser/browser-core/dev/updates/manifest.json
+```
+
+The manifest points the app at the matching zip in the same `updates/`
+directory on the `dev` branch. This GitHub raw manifest is the app's default
+update feed. If you publish updates from a different branch,
+pass it explicitly:
+
+```bash
+./package.sh --git-updates --branch=main
+```
+
 ## Project Structure
 
 ```

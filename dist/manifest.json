@@ -1,0 +1,7 @@
+{
+  "name": "BuildBrowser",
+  "version": "1.0",
+  "build": 16,
+  "bundleURL": "https://example.com/buildbrowser/BuildBrowser-1.0-16.app.zip",
+  "notes": "Build 16 is ready to install."
+}
