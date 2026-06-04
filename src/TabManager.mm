@@ -541,24 +541,35 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
 
     __weak typeof(self) weakSelf = self;
     [tab.webView evaluateJavaScript:js completionHandler:^(id result, NSError* error) {
-        NSString* iconURLString = (NSString*)result;
-        if (![iconURLString isKindOfClass:[NSString class]] || iconURLString.length == 0) {
+        NSString* iconURLString = [result isKindOfClass:[NSString class]] ? (NSString*)result : nil;
+        if (!iconURLString.length) {
             // 2. Fallback to Google Favicon API
             NSURL* url = [NSURL URLWithString:tab.url];
-            if (url.host) {
+            if (url.host && !url.isFileURL) {
                 iconURLString = [NSString stringWithFormat:@"https://www.google.com/s2/favicons?domain=%@&sz=32", url.host];
             }
         }
 
-        if (iconURLString) {
+        if (iconURLString.length) {
             [weakSelf downloadFavicon:iconURLString forTab:tab];
         }
     }];
 }
 
 - (void)downloadFavicon:(NSString*)urlString forTab:(BrowserTab*)tab {
+    if (![urlString isKindOfClass:[NSString class]] || !urlString.length) return;
     NSURL* url = [NSURL URLWithString:urlString];
     if (!url) return;
+
+    if (url.isFileURL) {
+        NSData* data = [NSData dataWithContentsOfURL:url];
+        NSImage* image = data ? [[NSImage alloc] initWithData:data] : nil;
+        if (image) {
+            tab.favicon = image;
+            if (self.onFaviconChanged) self.onFaviconChanged(tab, image);
+        }
+        return;
+    }
 
     __weak typeof(self) weakSelf = self;
     [[[NSURLSession sharedSession] dataTaskWithURL:url completionHandler:^(NSData* data, NSURLResponse* response, NSError* error) {
