@@ -34,10 +34,22 @@
   });
 }
 
+/**
+ * Sets the application icon to "BuildBrowser.icns" from the main bundle.
+ * @method applyApplicationIcon
+ * @return void
+ */
 - (void)applyApplicationIcon {
-  NSString* iconPath = [[NSBundle mainBundle] pathForResource:@"BuildBrowser" ofType:@"icns"];
-  NSImage* icon = iconPath ? [[NSImage alloc] initWithContentsOfFile:iconPath] : nil;
-  if (icon) [NSApp setApplicationIconImage:icon];
+    // Path to the icon resource within the app bundle
+    NSString *iconPath = [[NSBundle mainBundle] pathForResource:@"BuildBrowser" ofType:@"icns"];
+    
+    // Initialize an NSImage with the icon file if the path exists
+    NSImage *icon = iconPath ? [[NSImage alloc] initWithContentsOfFile:iconPath] : nil;
+    
+    // If the icon was successfully loaded, set it as the application's icon
+    if (icon) {
+        [NSApp setApplicationIconImage:icon];
+    }
 }
 
 - (void)applicationWillTerminate:(NSNotification*)_ {
