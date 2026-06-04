@@ -5,8 +5,12 @@
 
 @interface BrowserWindowController : NSWindowController <NSWindowDelegate>
 - (instancetype)initWithProfile:(Profile*)profile;
+- (instancetype)initWithProfile:(Profile*)profile restoredURLs:(NSArray<NSString*>*)urls activeIndex:(NSInteger)activeIndex;
+- (instancetype)initWithProfile:(Profile*)profile restoredURLs:(NSArray<NSString*>*)urls pinned:(NSArray<NSNumber*>*)pinned activeIndex:(NSInteger)activeIndex;
 @property (readonly) TabManager* tabManager;
 @property (readonly) Profile* profile;
+- (NSDictionary*)sessionState;
+- (void)restoreWindowState:(NSDictionary*)state;
 
 // Actions reachable from menu / keyboard
 - (void)newTab:(id)sender;
@@ -20,4 +24,5 @@
 - (void)showSettings:(id)sender;
 - (void)openFindBar:(id)sender;
 - (void)findNext:(id)sender;
+- (void)togglePinCurrentTab:(id)sender;
 @end

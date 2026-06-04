@@ -211,13 +211,16 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     id obj = _filtered[row];
     NSString* title = [obj valueForKey:@"title"] ?: @"";
     NSString* url   = [obj valueForKey:@"url"]   ?: @"";
+    NSString* folder = [obj valueForKey:@"folder"] ?: @"Favorites";
     BOOL isBookmark = (_mode == ModeBookmarks);
 
     for (NSView* sub in cell.subviews) {
         if ([sub.identifier isEqualToString:@"titleLabel"])
             ((NSTextField*)sub).stringValue = title.length ? title : url;
         else if ([sub.identifier isEqualToString:@"urlLabel"])
-            ((NSTextField*)sub).stringValue = url;
+            ((NSTextField*)sub).stringValue = isBookmark
+                ? [NSString stringWithFormat:@"%@  -  %@", folder.length ? folder : @"Favorites", url]
+                : url;
         else if ([sub.identifier isEqualToString:@"iconBg"]) {
             NSColor* c = isBookmark
                 ? [NSColor systemOrangeColor]
@@ -273,6 +276,10 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
 
     if (_mode == ModeBookmarks) {
         [menu addItem:[NSMenuItem separatorItem]];
+        NSMenuItem* edit = [[NSMenuItem alloc] initWithTitle:@"Edit Bookmark…"
+            action:@selector(editSelected:) keyEquivalent:@""];
+        edit.target = self; [menu addItem:edit];
+
         NSMenuItem* del = [[NSMenuItem alloc] initWithTitle:@"Remove Bookmark"
             action:@selector(deleteSelected:) keyEquivalent:@""];
         del.target = self; [menu addItem:del];
@@ -285,6 +292,51 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     if (row < 0 || row >= (NSInteger)_filtered.count) return;
     NSString* url = [_filtered[row] valueForKey:@"url"];
     if (url && self.openURLCallback) self.openURLCallback(url);
+}
+
+- (void)editSelected:(id)_ {
+    NSInteger row = _tableView.selectedRow;
+    if (row < 0 || row >= (NSInteger)_filtered.count || _mode != ModeBookmarks) return;
+
+    Bookmark* bm = _filtered[row];
+    NSAlert* alert = [NSAlert new];
+    alert.messageText = @"Edit Bookmark";
+    alert.informativeText = @"Update the bookmark title or URL.";
+    [alert addButtonWithTitle:@"Save"];
+    [alert addButtonWithTitle:@"Cancel"];
+
+    NSView* form = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 360, 88)];
+    NSTextField* titleField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 64, 360, 24)];
+    titleField.stringValue = bm.title ?: @"";
+    titleField.placeholderString = @"Title";
+    [form addSubview:titleField];
+
+    NSTextField* urlField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 32, 360, 24)];
+    urlField.stringValue = bm.url ?: @"";
+    urlField.placeholderString = @"URL";
+    [form addSubview:urlField];
+
+    NSTextField* folderField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 360, 24)];
+    folderField.stringValue = bm.folder.length ? bm.folder : @"Favorites";
+    folderField.placeholderString = @"Folder";
+    [form addSubview:folderField];
+    alert.accessoryView = form;
+
+    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result) {
+        if (result != NSAlertFirstButtonReturn) return;
+        NSString* oldURL = bm.url;
+        NSArray<Bookmark*>* bms = [BookmarkManager profileShared].bookmarks;
+        for (NSInteger i = 0; i < (NSInteger)bms.count; i++) {
+            if ([bms[i].url isEqualToString:oldURL]) {
+                [[BookmarkManager profileShared] updateBookmarkAtIndex:i
+                                                                  title:titleField.stringValue
+                                                                    url:urlField.stringValue
+                                                                 folder:folderField.stringValue];
+                break;
+            }
+        }
+        [self reloadData];
+    }];
 }
 
 - (void)deleteSelected:(id)_ {

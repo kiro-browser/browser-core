@@ -10,6 +10,8 @@
 @property (copy)   NSString*    title;
 @property (copy)   NSString*    url;
 @property (strong) NSImage*     favicon;     // New property
+@property (strong) NSDictionary* certificateInfo;
+@property (assign) BOOL         pinned;
 @end
 
 // Owns all tabs, drives switching / creation / closing
@@ -31,10 +33,13 @@
 @property (copy) void (^onLoadProgress)(BrowserTab* tab, double progress);
 @property (copy) void (^onLoadStateChanged)(BrowserTab* tab, BOOL loading);
 @property (copy) void (^onFaviconChanged)(BrowserTab* tab, NSImage* icon); // New callback
+@property (copy) void (^onInternalCommand)(NSString* command);
 
 - (BrowserTab*)newTabWithURL:(NSString*)url;
+- (void)loadURL:(NSString*)raw inTab:(BrowserTab*)tab;
 - (void)closeTabAtIndex:(NSInteger)index;
 - (void)switchToIndex:(NSInteger)index;
+- (void)setPinned:(BOOL)pinned forTabAtIndex:(NSInteger)index;
 
 + (NSString*)sanitizeURL:(NSString*)input;
 

@@ -52,6 +52,7 @@
 
     DownloadItem* item = [self itemForDownload:dl];
     item.filename = filename;
+    item.totalBytes = response.expectedContentLength;
 
     NSString* downloads = [NSSearchPathForDirectoriesInDomains(
         NSDownloadsDirectory, NSUserDomainMask, YES) firstObject];

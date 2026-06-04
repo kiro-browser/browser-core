@@ -79,7 +79,7 @@ static const NSInteger kMaxEntries = 2000;
 }
 
 - (void)recordVisitWithTitle:(NSString *)title url:(NSString *)url {
-  if (!url.length || [url hasPrefix:@"about:"])
+  if (!url.length || [url hasPrefix:@"about:"] || [url hasPrefix:@"buildbrowser:"])
     return;
 
   // Deduplicate: remove existing entry for same URL visited today

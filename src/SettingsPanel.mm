@@ -1,6 +1,7 @@
 #import "SettingsManager.h"
 #import "HistoryManager.h"
 #import "ProfileManager.h"
+#import "UpdateManager.h"
 
 // ── SettingsPanel ─────────────────────────────────────────────────────────────
 // macOS-style settings: sidebar nav on the left, content pane on the right.
@@ -61,10 +62,15 @@ static NSTextField* makeRowLabel(NSString* text) {
     // General
     NSTextField*  _homepageField;
     NSTextField*  _searchField;
+    NSTextView*   _launchersTextView;
     // Privacy
     NSButton*     _jsToggle;
     NSButton*     _popupToggle;
     NSButton*     _privateToggle;
+    NSButton*     _adBlockToggle;
+    // Updates
+    NSTextField*  _updateFeedField;
+    NSButton*     _autoCheckToggle;
     // Appearance
     NSButton*     _bookmarksBarToggle;
     // Data
@@ -141,7 +147,9 @@ static NSTextField* makeRowLabel(NSString* text) {
 
     _sidebarItems = @[
         [SettingsSidebarItem item:@"General"    symbol:@"house"],
+        [SettingsSidebarItem item:@"Launchers"  symbol:@"at"],
         [SettingsSidebarItem item:@"Privacy"    symbol:@"lock.shield"],
+        [SettingsSidebarItem item:@"Updates"    symbol:@"arrow.triangle.2.circlepath"],
         [SettingsSidebarItem item:@"Appearance" symbol:@"paintbrush"],
         [SettingsSidebarItem item:@"Data"       symbol:@"internaldrive"],
     ];
@@ -160,7 +168,9 @@ static NSTextField* makeRowLabel(NSString* text) {
 
     _contentViews = @[
         [self buildGeneralPane],
+        [self buildLaunchersPane],
         [self buildPrivacyPane],
+        [self buildUpdatesPane],
         [self buildAppearancePane],
         [self buildDataPane],
     ];
@@ -228,6 +238,42 @@ static NSTextField* makeRowLabel(NSString* text) {
     return v;
 }
 
+- (NSView*)buildLaunchersPane {
+    NSView* v = [NSView new];
+    CGFloat W = 459, y = 340;
+
+    NSTextField* title = [NSTextField labelWithString:@"Launchers"];
+    title.frame = NSMakeRect(24, y, 400, 24);
+    title.font  = [NSFont boldSystemFontOfSize:17];
+    [v addSubview:title]; y -= 32;
+
+    NSTextField* hint = [NSTextField labelWithString:@"One per line: alias = open-url | optional-search-url-with-%@"];
+    hint.frame = NSMakeRect(24, y, W - 48, 18);
+    hint.font = [NSFont systemFontOfSize:11];
+    hint.textColor = [NSColor secondaryLabelColor];
+    [v addSubview:hint]; y -= 26;
+
+    NSScrollView* scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 72, W - 32, y - 72)];
+    scroll.hasVerticalScroller = YES;
+    scroll.borderType = NSBezelBorder;
+    scroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+
+    _launchersTextView = [[NSTextView alloc] initWithFrame:scroll.bounds];
+    _launchersTextView.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    _launchersTextView.automaticQuoteSubstitutionEnabled = NO;
+    _launchersTextView.automaticDashSubstitutionEnabled = NO;
+    scroll.documentView = _launchersTextView;
+    [v addSubview:scroll];
+
+    NSTextField* examples = [NSTextField labelWithString:@"Example: github = https://github.com | https://github.com/search?q=%@"];
+    examples.frame = NSMakeRect(24, 48, W - 48, 16);
+    examples.font = [NSFont systemFontOfSize:10];
+    examples.textColor = [NSColor tertiaryLabelColor];
+    [v addSubview:examples];
+
+    return v;
+}
+
 - (NSView*)buildPrivacyPane {
     NSView* v = [NSView new];
     CGFloat W = 459, y = 340;
@@ -237,20 +283,20 @@ static NSTextField* makeRowLabel(NSString* text) {
     title.font  = [NSFont boldSystemFontOfSize:17];
     [v addSubview:title]; y -= 36;
 
-    // Three toggles in one group box
-    NSView* box = makeGroupBox(16, y - 3*44 - 2, W - 32, 3*44 + 2);
+    NSView* box = makeGroupBox(16, y - 4*44 - 2, W - 32, 4*44 + 2);
     [v addSubview:box];
 
     // Build toggles individually to avoid ARC pointer-to-ivar issues
-    NSString* labels[] = { @"Enable JavaScript", @"Block pop-up windows", @"Private browsing (no history)" };
+    NSString* labels[] = { @"Enable JavaScript", @"Block pop-up windows", @"Private browsing", @"Block ads and trackers" };
     NSString* subtitles[] = {
         @"Required by most modern websites",
         @"Prevent sites from opening new windows",
-        @"History and cookies won't be saved"
+        @"Use temporary website data and skip history",
+        @"Apply built-in WebKit content blocking rules"
     };
 
-    for (NSInteger i = 0; i < 3; i++) {
-        CGFloat rowY = (2 - i) * 44 + 2;
+    for (NSInteger i = 0; i < 4; i++) {
+        CGFloat rowY = (3 - i) * 44 + 2;
         if (i > 0) [box addSubview:makeSeparator(rowY + 44, W - 32)];
 
         NSTextField* lbl = makeRowLabel(labels[i]);
@@ -271,8 +317,54 @@ static NSTextField* makeRowLabel(NSString* text) {
 
         if (i == 0) _jsToggle      = toggle;
         else if (i == 1) _popupToggle   = toggle;
-        else             _privateToggle = toggle;
+        else if (i == 2) _privateToggle = toggle;
+        else             _adBlockToggle = toggle;
     }
+
+    return v;
+}
+
+- (NSView*)buildUpdatesPane {
+    NSView* v = [NSView new];
+    CGFloat W = 459, y = 340;
+
+    NSTextField* title = [NSTextField labelWithString:@"Updates"];
+    title.frame = NSMakeRect(24, y, 400, 24);
+    title.font  = [NSFont boldSystemFontOfSize:17];
+    [v addSubview:title]; y -= 36;
+
+    NSView* box = makeGroupBox(16, y - 88, W - 32, 88);
+    [v addSubview:box];
+
+    NSTextField* feedLabel = makeRowLabel(@"Manifest URL");
+    feedLabel.frame = NSMakeRect(16, 50, 100, 18);
+    [box addSubview:feedLabel];
+
+    _updateFeedField = [[NSTextField alloc] initWithFrame:NSMakeRect(120, 48, W - 32 - 136, 22)];
+    _updateFeedField.bezelStyle = NSTextFieldRoundedBezel;
+    _updateFeedField.focusRingType = NSFocusRingTypeNone;
+    _updateFeedField.font = [NSFont systemFontOfSize:13];
+    [box addSubview:_updateFeedField];
+
+    NSTextField* autoLabel = makeRowLabel(@"Auto-check on launch");
+    autoLabel.frame = NSMakeRect(16, 18, 180, 18);
+    [box addSubview:autoLabel];
+
+    _autoCheckToggle = [NSButton buttonWithTitle:@"" target:nil action:nil];
+    _autoCheckToggle.buttonType = NSButtonTypeSwitch;
+    _autoCheckToggle.frame = NSMakeRect(W - 32 - 52, 14, 44, 22);
+    [box addSubview:_autoCheckToggle];
+
+    NSButton* checkNow = [NSButton buttonWithTitle:@"Check Now" target:self action:@selector(checkNowForUpdates:)];
+    checkNow.bezelStyle = NSBezelStyleRounded;
+    checkNow.frame = NSMakeRect(W - 32 - 110, 8, 102, 24);
+    [box addSubview:checkNow];
+
+    NSTextField* hint = [NSTextField labelWithString:@"Default: http://127.0.0.1:8787/manifest.json"];
+    hint.frame = NSMakeRect(24, 48, 260, 16);
+    hint.font = [NSFont systemFontOfSize:10];
+    hint.textColor = [NSColor secondaryLabelColor];
+    [v addSubview:hint];
 
     return v;
 }
@@ -347,9 +439,13 @@ static NSTextField* makeRowLabel(NSString* text) {
     SettingsManager* s = [SettingsManager profileShared];
     _homepageField.stringValue     = s.homepage ?: @"";
     _searchField.stringValue       = s.searchEngineURL ?: @"";
+    _launchersTextView.string      = [self textFromLaunchers:s.domainLaunchers];
+    _updateFeedField.stringValue   = s.updateFeedURL ?: @"";
     _jsToggle.state                = s.javascriptEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     _popupToggle.state             = s.blockPopups       ? NSControlStateValueOn : NSControlStateValueOff;
     _privateToggle.state           = s.privateBrowsing   ? NSControlStateValueOn : NSControlStateValueOff;
+    _adBlockToggle.state           = s.adBlockEnabled    ? NSControlStateValueOn : NSControlStateValueOff;
+    _autoCheckToggle.state         = s.autoCheckUpdates  ? NSControlStateValueOn : NSControlStateValueOff;
     _bookmarksBarToggle.state      = s.showBookmarksBar  ? NSControlStateValueOn : NSControlStateValueOff;
 }
 
@@ -357,15 +453,74 @@ static NSTextField* makeRowLabel(NSString* text) {
 
 - (void)done:(id)_ {
     SettingsManager* s  = [SettingsManager profileShared];
-    s.homepage          = _homepageField.stringValue;
-    s.searchEngineURL   = _searchField.stringValue;
+    NSString* homepage = [_homepageField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString* searchURL = [_searchField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (!homepage.length) homepage = @"buildbrowser://start";
+    if (!searchURL.length || ![searchURL containsString:@"%@"]) searchURL = @"https://duckduckgo.com/?q=%@";
+    s.homepage          = homepage;
+    s.searchEngineURL   = searchURL;
+    s.domainLaunchers   = [self launchersFromText:_launchersTextView.string];
+    NSString* updateFeed = [_updateFeedField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    s.updateFeedURL     = updateFeed.length ? updateFeed : @"http://127.0.0.1:8787/manifest.json";
     s.javascriptEnabled = (_jsToggle.state             == NSControlStateValueOn);
     s.blockPopups       = (_popupToggle.state           == NSControlStateValueOn);
     s.privateBrowsing   = (_privateToggle.state         == NSControlStateValueOn);
+    s.adBlockEnabled    = (_adBlockToggle.state         == NSControlStateValueOn);
+    s.autoCheckUpdates  = (_autoCheckToggle.state       == NSControlStateValueOn);
     s.showBookmarksBar  = (_bookmarksBarToggle.state    == NSControlStateValueOn);
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"BuildBrowserSettingsDidChangeNotification"
+                                                        object:self];
     [_parentWindow endSheet:self.window];
     [self.window orderOut:nil];
     _parentWindow = nil;
+}
+
+- (void)checkNowForUpdates:(id)_ {
+    SettingsManager* s = [SettingsManager profileShared];
+    NSString* updateFeed = [_updateFeedField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    s.updateFeedURL = updateFeed.length ? updateFeed : @"http://127.0.0.1:8787/manifest.json";
+    s.autoCheckUpdates = (_autoCheckToggle.state == NSControlStateValueOn);
+    [[UpdateManager shared] checkForUpdates];
+}
+
+- (NSString*)textFromLaunchers:(NSDictionary*)launchers {
+    NSMutableArray<NSString*>* lines = [NSMutableArray new];
+    NSArray<NSString*>* aliases = [[launchers allKeys] sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
+    for (NSString* alias in aliases) {
+        NSDictionary* entry = launchers[alias];
+        if (![entry isKindOfClass:[NSDictionary class]]) continue;
+        NSString* url = entry[@"url"] ?: @"";
+        NSString* search = entry[@"search"] ?: @"";
+        if (search.length)
+            [lines addObject:[NSString stringWithFormat:@"%@ = %@ | %@", alias, url, search]];
+        else if (url.length)
+            [lines addObject:[NSString stringWithFormat:@"%@ = %@", alias, url]];
+    }
+    return [lines componentsJoinedByString:@"\n"];
+}
+
+- (NSDictionary*)launchersFromText:(NSString*)text {
+    NSMutableDictionary* launchers = [NSMutableDictionary new];
+    NSArray<NSString*>* lines = [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+    for (NSString* raw in lines) {
+        NSString* line = [raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (!line.length || [line hasPrefix:@"#"]) continue;
+        NSRange eq = [line rangeOfString:@"="];
+        if (eq.location == NSNotFound) continue;
+        NSString* alias = [[line substringToIndex:eq.location] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].lowercaseString;
+        if ([alias hasPrefix:@"@"]) alias = [alias substringFromIndex:1];
+        NSString* rhs = [[line substringFromIndex:eq.location + 1] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        NSArray<NSString*>* parts = [rhs componentsSeparatedByString:@"|"];
+        NSString* url = [parts.firstObject stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (!alias.length || !url.length) continue;
+        NSMutableDictionary* entry = [@{ @"url": url } mutableCopy];
+        if (parts.count > 1) {
+            NSString* search = [parts[1] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            if (search.length) entry[@"search"] = search;
+        }
+        launchers[alias] = entry;
+    }
+    return launchers;
 }
 
 - (void)clearHistory:(id)_ {
@@ -389,6 +544,8 @@ static NSTextField* makeRowLabel(NSString* text) {
         if (r == NSAlertFirstButtonReturn) {
             [[SettingsManager profileShared] resetToDefaults];
             [self reloadValues];
+            [[NSNotificationCenter defaultCenter] postNotificationName:@"BuildBrowserSettingsDidChangeNotification"
+                                                                object:self];
         }
     }];
 }

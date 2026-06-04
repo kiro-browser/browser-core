@@ -1,4 +1,6 @@
 #import "BrowserWindowController.h"
+#import "SettingsManager.h"
+#import "UpdateManager.h"
 #import "ProfileManager.h"
 #import "BookmarkManager.h"
 #import "HistoryManager.h"
@@ -13,11 +15,33 @@
 - (void)applicationDidFinishLaunching:(NSNotification *)_ {
   self.windows = [NSMutableArray new];
   [self buildMenu];
+  [self applyApplicationIcon];
   
   Profile* p = [ProfileManager shared].activeProfile;
-  BrowserWindowController* wc = [[BrowserWindowController alloc] initWithProfile:p];
+  NSDictionary* session = [self loadSession];
+  NSArray* urls = [session[@"urls"] isKindOfClass:[NSArray class]] ? session[@"urls"] : nil;
+  NSArray* pinned = [session[@"pinned"] isKindOfClass:[NSArray class]] ? session[@"pinned"] : nil;
+  NSInteger activeIndex = [session[@"activeIndex"] respondsToSelector:@selector(integerValue)]
+      ? [session[@"activeIndex"] integerValue] : 0;
+  BrowserWindowController* wc = [[BrowserWindowController alloc] initWithProfile:p restoredURLs:urls pinned:pinned activeIndex:activeIndex];
   [self.windows addObject:wc];
   [wc showWindow:nil];
+  [wc restoreWindowState:session];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    if ([SettingsManager profileShared].autoCheckUpdates) {
+      [[UpdateManager shared] checkForUpdatesSilently];
+    }
+  });
+}
+
+- (void)applyApplicationIcon {
+  NSString* iconPath = [[NSBundle mainBundle] pathForResource:@"BuildBrowser" ofType:@"icns"];
+  NSImage* icon = iconPath ? [[NSImage alloc] initWithContentsOfFile:iconPath] : nil;
+  if (icon) [NSApp setApplicationIconImage:icon];
+}
+
+- (void)applicationWillTerminate:(NSNotification*)_ {
+  [self saveSession];
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)_ {
@@ -32,9 +56,16 @@
   // ── BuildBrowser
   // ──────────────────────────────────────────────────────────────
   NSMenu *appMenu = [NSMenu new];
+  [appMenu addItemWithTitle:@"About BuildBrowser"
+                     action:@selector(showAbout:)
+              keyEquivalent:@""];
+  [appMenu addItem:[NSMenuItem separatorItem]];
   [appMenu addItemWithTitle:@"Settings…"
                      action:@selector(showSettings:)
               keyEquivalent:@","];
+  [appMenu addItemWithTitle:@"Check for Updates…"
+                     action:@selector(checkForUpdates:)
+              keyEquivalent:@""];
   [appMenu addItem:[NSMenuItem separatorItem]];
   [appMenu addItemWithTitle:@"Quit BuildBrowser"
                      action:@selector(terminate:)
@@ -90,6 +121,10 @@
                       action:@selector(goForward:)
                keyEquivalent:@"]"];
   [viewMenu addItem:[NSMenuItem separatorItem]];
+  [viewMenu addItemWithTitle:@"Pin Tab"
+                      action:@selector(togglePinCurrentTab:)
+               keyEquivalent:@"p"];
+  [viewMenu addItem:[NSMenuItem separatorItem]];
   [viewMenu addItemWithTitle:@"Bookmarks"
                       action:@selector(showBookmarks:)
                keyEquivalent:@"b"];
@@ -110,6 +145,45 @@
   NSApp.mainMenu = bar;
 }
 
+- (void)showAbout:(id)_ {
+  NSDictionary* info = [[NSBundle mainBundle] infoDictionary];
+  NSString* version = info[@"CFBundleShortVersionString"] ?: @"1.0";
+  NSString* build = info[@"CFBundleVersion"] ?: @"1";
+  NSImage* icon = [NSApp applicationIconImage];
+  [NSApp orderFrontStandardAboutPanelWithOptions:@{
+    NSAboutPanelOptionApplicationName: @"BuildBrowser",
+    NSAboutPanelOptionApplicationVersion: version,
+    NSAboutPanelOptionVersion: [NSString stringWithFormat:@"Build %@", build],
+    NSAboutPanelOptionCredits: [[NSAttributedString alloc] initWithString:
+      @"A lightweight native macOS browser built with Cocoa and WebKit."],
+    NSAboutPanelOptionApplicationIcon: icon ?: [NSImage new]
+  }];
+}
+
+- (NSString*)sessionPath {
+  NSString* support = [NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES) firstObject];
+  NSString* base = [support stringByAppendingPathComponent:@"BuildBrowser"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:base withIntermediateDirectories:YES attributes:nil error:nil];
+  return [base stringByAppendingPathComponent:@"session.plist"];
+}
+
+- (NSDictionary*)loadSession {
+  NSDictionary* session = [NSDictionary dictionaryWithContentsOfFile:[self sessionPath]];
+  return [session isKindOfClass:[NSDictionary class]] ? session : @{};
+}
+
+- (void)saveSession {
+  BrowserWindowController* wc = nil;
+  for (BrowserWindowController* candidate in self.windows) {
+    if ([candidate isKindOfClass:[BrowserWindowController class]]) {
+      wc = candidate;
+      break;
+    }
+  }
+  NSDictionary* state = [wc sessionState] ?: @{};
+  [state writeToFile:[self sessionPath] atomically:YES];
+}
+
 // Close-tab forwarded to window controller
 - (void)closeCurrentTab:(id)_ {
   NSWindow* win = [NSApp keyWindow];
@@ -117,6 +191,10 @@
     BrowserWindowController* wc = (BrowserWindowController*)win.windowController;
     [wc.tabManager closeTabAtIndex:wc.tabManager.activeIndex];
   }
+}
+
+- (void)checkForUpdates:(id)_ {
+  [[UpdateManager shared] checkForUpdates];
 }
 
 @end
