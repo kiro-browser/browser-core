@@ -38,6 +38,22 @@
       <string>Owner</string>
     </dict>
   </array>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>HTML Document</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.html</string>
+        <string>public.xhtml</string>
+      </array>
+      <key>LSHandlerRank</key>
+      <string>Default</string>
+    </dict>
+  </array>
   <key>NSHumanReadableCopyright</key>
   <string>${MACOSX_BUNDLE_COPYRIGHT}</string>
   <key>NSAppTransportSecurity</key>

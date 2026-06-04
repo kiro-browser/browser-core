@@ -4,6 +4,13 @@
 
 @implementation DefaultBrowserManager
 
++ (NSString*)defaultHandlerForURLScheme:(CFStringRef)scheme {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    return CFBridgingRelease(LSCopyDefaultHandlerForURLScheme(scheme));
+#pragma clang diagnostic pop
+}
+
 + (NSError*)errorWithMessage:(NSString*)message code:(NSInteger)code details:(NSString*)details {
     NSMutableDictionary* userInfo = [@{ NSLocalizedDescriptionKey: message } mutableCopy];
     if (details.length) userInfo[NSLocalizedRecoverySuggestionErrorKey] = details;
@@ -14,10 +21,8 @@
     NSString* bundleID = NSBundle.mainBundle.bundleIdentifier;
     if (!bundleID.length) return NO;
 
-    NSURL* httpAppURL = [NSWorkspace.sharedWorkspace URLForApplicationToOpenURL:[NSURL URLWithString:@"http://example.com"]];
-    NSURL* httpsAppURL = [NSWorkspace.sharedWorkspace URLForApplicationToOpenURL:[NSURL URLWithString:@"https://example.com"]];
-    NSString* httpHandler = httpAppURL ? [NSBundle bundleWithURL:httpAppURL].bundleIdentifier : nil;
-    NSString* httpsHandler = httpsAppURL ? [NSBundle bundleWithURL:httpsAppURL].bundleIdentifier : nil;
+    NSString* httpHandler = [self defaultHandlerForURLScheme:CFSTR("http")];
+    NSString* httpsHandler = [self defaultHandlerForURLScheme:CFSTR("https")];
     return [httpHandler isEqualToString:bundleID] && [httpsHandler isEqualToString:bundleID];
 }
 
@@ -40,11 +45,14 @@
 
     OSStatus httpStatus = LSSetDefaultHandlerForURLScheme(CFSTR("http"), (__bridge CFStringRef)bundleID);
     OSStatus httpsStatus = LSSetDefaultHandlerForURLScheme(CFSTR("https"), (__bridge CFStringRef)bundleID);
-    if (httpStatus == noErr && httpsStatus == noErr) return YES;
+    OSStatus htmlStatus = LSSetDefaultRoleHandlerForContentType(CFSTR("public.html"), kLSRolesViewer, (__bridge CFStringRef)bundleID);
+    OSStatus xhtmlStatus = LSSetDefaultRoleHandlerForContentType(CFSTR("public.xhtml"), kLSRolesViewer, (__bridge CFStringRef)bundleID);
+    if (httpStatus == noErr && httpsStatus == noErr && htmlStatus == noErr && xhtmlStatus == noErr) return YES;
 
     if (error) {
-        NSString* details = [NSString stringWithFormat:@"Bundle ID: %@. http OSStatus: %d. https OSStatus: %d.", bundleID, (int)httpStatus, (int)httpsStatus];
-        *error = [self errorWithMessage:@"macOS could not set BuildBrowser as the default browser." code:(NSInteger)(httpStatus != noErr ? httpStatus : httpsStatus) details:details];
+        NSString* details = [NSString stringWithFormat:@"Bundle ID: %@. http OSStatus: %d. https OSStatus: %d. public.html OSStatus: %d. public.xhtml OSStatus: %d.", bundleID, (int)httpStatus, (int)httpsStatus, (int)htmlStatus, (int)xhtmlStatus];
+        OSStatus status = httpStatus != noErr ? httpStatus : (httpsStatus != noErr ? httpsStatus : (htmlStatus != noErr ? htmlStatus : xhtmlStatus));
+        *error = [self errorWithMessage:@"macOS could not set BuildBrowser as the default browser." code:(NSInteger)status details:details];
     }
     return NO;
 }
