@@ -117,8 +117,9 @@ MANIFEST_PATH="$DIST_DIR/manifest.json"
 TMP_PKG="$DIST_DIR/.$BASE_NAME.pkg.$$"
 TMP_ZIP="$DIST_DIR/.$BASE_NAME.app.zip.$$"
 STAGE_DIR="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}BuildBrowserPackage.XXXXXX")"
-APP_STAGE="$STAGE_DIR/Applications"
-SCRIPTS_DIR="$STAGE_DIR/Scripts"
+PAYLOAD_DIR="$STAGE_DIR/payload"
+APP_STAGE="$PAYLOAD_DIR/Applications"
+SCRIPTS_DIR="$STAGE_DIR/scripts"
 COMPONENT_PLIST="$STAGE_DIR/components.plist"
 
 export COPYFILE_DISABLE=1
@@ -148,14 +149,14 @@ EOF
 chmod 755 "$SCRIPTS_DIR/postinstall"
 
 echo "-> Writing package component metadata..."
-/usr/bin/pkgbuild --analyze --root "$STAGE_DIR" "$COMPONENT_PLIST" >/dev/null
+/usr/bin/pkgbuild --analyze --root "$PAYLOAD_DIR" "$COMPONENT_PLIST" >/dev/null
 /usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "$COMPONENT_PLIST" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Set :0:BundleIsVersionChecked true" "$COMPONENT_PLIST" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Set :0:BundleOverwriteAction upgrade" "$COMPONENT_PLIST" 2>/dev/null || true
 
 echo "-> Creating component package..."
 /usr/bin/pkgbuild \
-  --root "$STAGE_DIR" \
+  --root "$PAYLOAD_DIR" \
   --component-plist "$COMPONENT_PLIST" \
   --scripts "$SCRIPTS_DIR" \
   --identifier "$PKG_ID" \
