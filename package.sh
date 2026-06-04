@@ -118,17 +118,46 @@ TMP_PKG="$DIST_DIR/.$BASE_NAME.pkg.$$"
 TMP_ZIP="$DIST_DIR/.$BASE_NAME.app.zip.$$"
 STAGE_DIR="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}BuildBrowserPackage.XXXXXX")"
 APP_STAGE="$STAGE_DIR/Applications"
+SCRIPTS_DIR="$STAGE_DIR/Scripts"
+COMPONENT_PLIST="$STAGE_DIR/components.plist"
 
 export COPYFILE_DISABLE=1
 
-mkdir -p "$DIST_DIR" "$APP_STAGE"
+mkdir -p "$DIST_DIR" "$APP_STAGE" "$SCRIPTS_DIR"
 
 echo "-> Staging app bundle..."
 /usr/bin/ditto --noextattr --noqtn "$APP_PATH" "$APP_STAGE/BuildBrowser.app"
 
+cat > "$SCRIPTS_DIR/postinstall" <<'EOF'
+#!/bin/sh
+set -eu
+
+APP="/Applications/BuildBrowser.app"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+
+if [ -d "$APP" ]; then
+  /usr/bin/xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+  if [ -x "$LSREGISTER" ]; then
+    "$LSREGISTER" -f "$APP" 2>/dev/null || true
+  fi
+  /usr/bin/mdimport "$APP" 2>/dev/null || true
+fi
+
+exit 0
+EOF
+chmod 755 "$SCRIPTS_DIR/postinstall"
+
+echo "-> Writing package component metadata..."
+/usr/bin/pkgbuild --analyze --root "$STAGE_DIR" "$COMPONENT_PLIST" >/dev/null
+/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "$COMPONENT_PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Set :0:BundleIsVersionChecked true" "$COMPONENT_PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Set :0:BundleOverwriteAction upgrade" "$COMPONENT_PLIST" 2>/dev/null || true
+
 echo "-> Creating component package..."
 /usr/bin/pkgbuild \
   --root "$STAGE_DIR" \
+  --component-plist "$COMPONENT_PLIST" \
+  --scripts "$SCRIPTS_DIR" \
   --identifier "$PKG_ID" \
   --version "$VERSION.$BUILD" \
   --install-location "/" \
