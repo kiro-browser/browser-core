@@ -1,7 +1,7 @@
 {
   "name": "BuildBrowser",
   "version": "1.0",
-  "build": 23,
-  "bundleURL": "https://raw.githubusercontent.com/kiro-browser/browser-core/dev/updates/BuildBrowser-1.0-23.app.zip",
-  "notes": "Build 23 is ready to install."
+  "build": 24,
+  "bundleURL": "https://raw.githubusercontent.com/kiro-browser/browser-core/dev/updates/BuildBrowser-1.0-24.app.zip",
+  "notes": "Build 24 is ready to install."
 }

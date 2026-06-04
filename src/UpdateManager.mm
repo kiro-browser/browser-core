@@ -47,12 +47,25 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
     return [NSString stringWithFormat:@"https://raw.githubusercontent.com/%@/%@/%@/%@", owner, repo, branch, rawPath];
 }
 
-@interface UpdateManager ()
+@interface UpdateManager () <NSURLSessionDownloadDelegate>
 @property (strong) NSURLSession* session;
+@property (strong) NSURLSession* downloadSession;
+@property (strong) NSURLSessionDownloadTask* activeUpdateTask;
+@property (copy) NSDictionary* activeUpdateManifest;
+@property (strong) NSWindow* progressWindow;
+@property (strong) NSTextField* progressTitleLabel;
+@property (strong) NSTextField* progressDetailLabel;
+@property (strong) NSProgressIndicator* progressIndicator;
+@property (strong) NSButton* cancelButton;
 @property (assign) BOOL checking;
 - (void)checkForUpdatesPrompting:(BOOL)prompt;
 - (void)promptForUpdate:(NSDictionary*)manifest currentBuild:(NSInteger)currentBuild remoteBuild:(NSInteger)remoteBuild;
 - (void)downloadAndInstallUpdate:(NSDictionary*)manifest;
+- (void)installDownloadedUpdateAtURL:(NSURL*)location manifest:(NSDictionary*)manifest;
+- (void)showUpdateProgressWindowForManifest:(NSDictionary*)manifest;
+- (void)updateProgressTitle:(NSString*)title detail:(NSString*)detail percent:(double)percent indeterminate:(BOOL)indeterminate;
+- (void)closeUpdateProgressWindow;
+- (void)cancelUpdateDownload:(id)sender;
 - (NSString*)findAppBundleInsideDirectory:(NSString*)root preferredName:(NSString*)bundleName;
 - (void)presentAlert:(NSString*)title message:(NSString*)message;
 - (NSWindow*)presentationWindow;
@@ -73,6 +86,8 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
     self = [super init];
     if (self) {
         _session = [NSURLSession sessionWithConfiguration:[NSURLSessionConfiguration ephemeralSessionConfiguration]];
+        NSURLSessionConfiguration* config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+        _downloadSession = [NSURLSession sessionWithConfiguration:config delegate:self delegateQueue:nil];
     }
     return self;
 }
@@ -184,6 +199,8 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
 }
 
 - (void)downloadAndInstallUpdate:(NSDictionary*)manifest {
+    if (self.activeUpdateTask) return;
+
     NSString* bundleURLString = BBStringOrEmpty(manifest[@"bundleURL"]);
     if (!bundleURLString.length) bundleURLString = BBStringOrEmpty(manifest[@"url"]);
     if (!bundleURLString.length) {
@@ -197,15 +214,16 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
         return;
     }
 
-    NSURLSessionDownloadTask* task = [self.session downloadTaskWithURL:bundleURL completionHandler:^(NSURL* location, NSURLResponse* response, NSError* error) {
-        if (error || !location) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self presentAlert:@"Update Failed" message:error.localizedDescription ?: @"The update archive could not be downloaded."];
-            });
-            return;
-        }
+    self.activeUpdateManifest = manifest;
+    [self showUpdateProgressWindowForManifest:manifest];
+    NSURLSessionDownloadTask* task = [self.downloadSession downloadTaskWithURL:bundleURL];
+    self.activeUpdateTask = task;
+    [task resume];
+}
 
-        NSString* tempRoot = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"BuildBrowserUpdate-%@", [[NSUUID UUID] UUIDString]]];
+- (void)installDownloadedUpdateAtURL:(NSURL*)location manifest:(NSDictionary*)manifest {
+        [self updateProgressTitle:@"Installing Update" detail:@"Unpacking update archive..." percent:1.0 indeterminate:YES];
+        NSString* tempRoot = [@"/private/tmp" stringByAppendingPathComponent:[NSString stringWithFormat:@"BuildBrowserUpdate-%@", [[NSUUID UUID] UUIDString]]];
         NSString* unzipRoot = [tempRoot stringByAppendingPathComponent:@"unpacked"];
         NSString* scriptPath = [tempRoot stringByAppendingPathComponent:@"install.sh"];
         NSString* bundlePath = [NSBundle mainBundle].bundlePath;
@@ -220,6 +238,14 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
             [unzip waitUntilExit];
         } @catch (__unused NSException* e) {
             dispatch_async(dispatch_get_main_queue(), ^{
+                [self closeUpdateProgressWindow];
+                [self presentAlert:@"Update Failed" message:@"The update archive could not be unpacked."];
+            });
+            return;
+        }
+        if (unzip.terminationStatus != 0) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self closeUpdateProgressWindow];
                 [self presentAlert:@"Update Failed" message:@"The update archive could not be unpacked."];
             });
             return;
@@ -228,11 +254,13 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
         NSString* stagedApp = [self findAppBundleInsideDirectory:unzipRoot preferredName:bundleName];
         if (!stagedApp.length) {
             dispatch_async(dispatch_get_main_queue(), ^{
+                [self closeUpdateProgressWindow];
                 [self presentAlert:@"Update Failed" message:@"The update archive did not contain an app bundle."];
             });
             return;
         }
 
+        [self updateProgressTitle:@"Installing Update" detail:@"Preparing to replace the app and relaunch..." percent:1.0 indeterminate:YES];
         NSString* waitPid = [NSString stringWithFormat:@"%d", getpid()];
         NSString* script = [NSString stringWithFormat:
             @"#!/bin/sh\n"
@@ -255,6 +283,7 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
         [script writeToFile:scriptPath atomically:YES encoding:NSUTF8StringEncoding error:&writeError];
         if (writeError) {
             dispatch_async(dispatch_get_main_queue(), ^{
+                [self closeUpdateProgressWindow];
                 [self presentAlert:@"Update Failed" message:writeError.localizedDescription ?: @"The installer script could not be written."];
             });
             return;
@@ -268,17 +297,153 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
             [installer launch];
         } @catch (__unused NSException* e) {
             dispatch_async(dispatch_get_main_queue(), ^{
+                [self closeUpdateProgressWindow];
                 [self presentAlert:@"Update Failed" message:@"The installer could not be started."];
             });
             return;
         }
 
         dispatch_async(dispatch_get_main_queue(), ^{
+            [self updateProgressTitle:@"Relaunching" detail:@"BuildBrowser will quit, install the update, and reopen." percent:1.0 indeterminate:YES];
             [NSApp terminate:nil];
         });
-    }];
+}
 
-    [task resume];
+- (void)showUpdateProgressWindowForManifest:(NSDictionary*)manifest {
+    if (self.progressWindow) {
+        [self.progressWindow makeKeyAndOrderFront:nil];
+        return;
+    }
+
+    NSWindow* parent = [self presentationWindow];
+    NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 420, 146)
+                                                   styleMask:NSWindowStyleMaskTitled
+                                                     backing:NSBackingStoreBuffered defer:NO];
+    window.title = @"Software Update";
+    window.releasedWhenClosed = NO;
+
+    NSView* content = window.contentView;
+    NSTextField* title = [NSTextField labelWithString:@"Downloading Update"];
+    title.frame = NSMakeRect(20, 102, 380, 22);
+    title.font = [NSFont boldSystemFontOfSize:15];
+    [content addSubview:title];
+
+    NSTextField* detail = [NSTextField labelWithString:@"Starting download..."];
+    detail.frame = NSMakeRect(20, 78, 380, 18);
+    detail.font = [NSFont systemFontOfSize:12];
+    detail.textColor = [NSColor secondaryLabelColor];
+    [content addSubview:detail];
+
+    NSProgressIndicator* progress = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(20, 48, 380, 16)];
+    progress.style = NSProgressIndicatorStyleBar;
+    progress.minValue = 0.0;
+    progress.maxValue = 100.0;
+    progress.doubleValue = 0.0;
+    progress.indeterminate = YES;
+    [progress startAnimation:nil];
+    [content addSubview:progress];
+
+    NSButton* cancel = [NSButton buttonWithTitle:@"Cancel" target:self action:@selector(cancelUpdateDownload:)];
+    cancel.frame = NSMakeRect(318, 12, 82, 28);
+    cancel.bezelStyle = NSBezelStyleRounded;
+    [content addSubview:cancel];
+
+    self.progressWindow = window;
+    self.progressTitleLabel = title;
+    self.progressDetailLabel = detail;
+    self.progressIndicator = progress;
+    self.cancelButton = cancel;
+
+    if (parent) {
+        [parent beginSheet:window completionHandler:nil];
+    } else {
+        [window center];
+        [window makeKeyAndOrderFront:nil];
+    }
+}
+
+- (void)updateProgressTitle:(NSString*)title detail:(NSString*)detail percent:(double)percent indeterminate:(BOOL)indeterminate {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!self.progressWindow) return;
+        self.progressTitleLabel.stringValue = title ?: @"Updating";
+        self.progressDetailLabel.stringValue = detail ?: @"";
+        self.progressIndicator.indeterminate = indeterminate;
+        if (indeterminate) {
+            [self.progressIndicator startAnimation:nil];
+        } else {
+            [self.progressIndicator stopAnimation:nil];
+            self.progressIndicator.doubleValue = MAX(0.0, MIN(100.0, percent * 100.0));
+        }
+    });
+}
+
+- (void)closeUpdateProgressWindow {
+    if (!self.progressWindow) return;
+    NSWindow* window = self.progressWindow;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSWindow* parent = window.sheetParent;
+        if (parent) [parent endSheet:window];
+        [window orderOut:nil];
+    });
+    self.progressWindow = nil;
+    self.progressTitleLabel = nil;
+    self.progressDetailLabel = nil;
+    self.progressIndicator = nil;
+    self.cancelButton = nil;
+}
+
+- (void)cancelUpdateDownload:(id)sender {
+    [self.activeUpdateTask cancel];
+}
+
+- (void)URLSession:(NSURLSession*)session downloadTask:(NSURLSessionDownloadTask*)downloadTask
+      didWriteData:(int64_t)bytesWritten
+ totalBytesWritten:(int64_t)totalBytesWritten
+totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite {
+    if (downloadTask != self.activeUpdateTask) return;
+    if (totalBytesExpectedToWrite > 0) {
+        double percent = (double)totalBytesWritten / (double)totalBytesExpectedToWrite;
+        NSString* detail = [NSString stringWithFormat:@"Downloaded %.0f%%", percent * 100.0];
+        [self updateProgressTitle:@"Downloading Update" detail:detail percent:percent indeterminate:NO];
+    } else {
+        NSString* detail = [NSString stringWithFormat:@"Downloaded %.1f MB", (double)totalBytesWritten / 1024.0 / 1024.0];
+        [self updateProgressTitle:@"Downloading Update" detail:detail percent:0.0 indeterminate:YES];
+    }
+}
+
+- (void)URLSession:(NSURLSession*)session downloadTask:(NSURLSessionDownloadTask*)downloadTask
+didFinishDownloadingToURL:(NSURL*)location {
+    if (downloadTask != self.activeUpdateTask) return;
+    NSURL* destination = [NSURL fileURLWithPath:[@"/private/tmp" stringByAppendingPathComponent:[NSString stringWithFormat:@"BuildBrowserUpdate-%@.zip", [[NSUUID UUID] UUIDString]]]];
+    NSError* error = nil;
+    [[NSFileManager defaultManager] moveItemAtURL:location toURL:destination error:&error];
+    if (error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.activeUpdateTask = nil;
+            self.activeUpdateManifest = nil;
+            [self closeUpdateProgressWindow];
+            [self presentAlert:@"Update Failed" message:error.localizedDescription ?: @"The update archive could not be saved."];
+        });
+        return;
+    }
+
+    NSDictionary* manifest = self.activeUpdateManifest;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.activeUpdateTask = nil;
+        self.activeUpdateManifest = nil;
+        [self installDownloadedUpdateAtURL:destination manifest:manifest ?: @{}];
+    });
+}
+
+- (void)URLSession:(NSURLSession*)session task:(NSURLSessionTask*)task didCompleteWithError:(NSError*)error {
+    if (task != self.activeUpdateTask || !error) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.activeUpdateTask = nil;
+        self.activeUpdateManifest = nil;
+        [self closeUpdateProgressWindow];
+        if ([error.domain isEqualToString:NSURLErrorDomain] && error.code == NSURLErrorCancelled) return;
+        [self presentAlert:@"Update Failed" message:error.localizedDescription ?: @"The update archive could not be downloaded."];
+    });
 }
 
 - (NSString*)findAppBundleInsideDirectory:(NSString*)root preferredName:(NSString*)bundleName {
