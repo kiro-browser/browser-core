@@ -83,6 +83,8 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
 + (BOOL)shouldOfferContinueForError:(NSError*)error url:(NSString*)url;
 + (NSString*)errorPageHTMLForURL:(NSString*)url error:(NSError*)error;
 + (NSString*)htmlEscape:(NSString*)value;
++ (NSURL*)fileURLFromInput:(NSString*)input;
++ (NSURL*)readAccessURLForFileURL:(NSURL*)fileURL;
 - (NSString*)suggestedFilenameForURL:(NSString*)urlString;
 - (void)writeStringToPasteboard:(NSString*)value;
 - (void)showContextMenuForWebView:(WKWebView*)webView info:(NSDictionary*)info event:(NSEvent*)event;
@@ -238,6 +240,12 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
     }
 
     NSURL* nsurl = [NSURL URLWithString:url];
+    if (nsurl.isFileURL) {
+        NSURL* fileURL = nsurl.URLByResolvingSymlinksInPath;
+        NSURL* readAccessURL = [TabManager readAccessURLForFileURL:fileURL];
+        [tab.webView loadFileURL:fileURL allowingReadAccessToURL:readAccessURL];
+        return;
+    }
     if (nsurl) [tab.webView loadRequest:[NSURLRequest requestWithURL:nsurl]];
 }
 
@@ -245,6 +253,8 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
     NSString* trimmed = [input stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!trimmed.length) return kBuildBrowserStartURL;
     if ([trimmed hasPrefix:@"buildbrowser://"]) return trimmed;
+    NSURL* fileURL = [self fileURLFromInput:trimmed];
+    if (fileURL) return fileURL.absoluteString;
     if ([trimmed hasPrefix:@"@"]) {
         NSArray<NSString*>* parts = [trimmed componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
         NSString* alias = [parts.firstObject substringFromIndex:1].lowercaseString;
@@ -273,6 +283,40 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
     NSString* enc = [trimmed stringByAddingPercentEncodingWithAllowedCharacters:
                      NSCharacterSet.URLQueryAllowedCharacterSet];
     return [NSString stringWithFormat:searchTemplate, enc];
+}
+
++ (NSURL*)fileURLFromInput:(NSString*)input {
+    if (!input.length) return nil;
+
+    if ([input.lowercaseString hasPrefix:@"file://"]) {
+        NSURL* url = [NSURL URLWithString:input];
+        if (url.isFileURL) return url;
+
+        NSString* path = [[input substringFromIndex:@"file://".length] stringByRemovingPercentEncoding];
+        if ([path hasPrefix:@"localhost/"]) path = [path substringFromIndex:@"localhost".length];
+        if (path.length) return [NSURL fileURLWithPath:path];
+        return nil;
+    }
+
+    NSString* path = [input stringByExpandingTildeInPath];
+    if (![path hasPrefix:@"/"]) return nil;
+
+    BOOL isDirectory = NO;
+    if ([[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDirectory]) {
+        return [NSURL fileURLWithPath:path isDirectory:isDirectory];
+    }
+    return nil;
+}
+
++ (NSURL*)readAccessURLForFileURL:(NSURL*)fileURL {
+    if (!fileURL.isFileURL) return fileURL;
+
+    NSNumber* isDirectory = nil;
+    if ([fileURL getResourceValue:&isDirectory forKey:NSURLIsDirectoryKey error:nil] && isDirectory.boolValue)
+        return fileURL;
+
+    NSURL* parent = [fileURL URLByDeletingLastPathComponent];
+    return parent ?: fileURL;
 }
 
 + (NSString*)startPageHTML {

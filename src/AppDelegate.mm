@@ -77,6 +77,26 @@ static NSString* const kDefaultBrowserPromptSeen = @"BuildBrowser.defaultBrowser
   [self openURLsInBrowser:urls];
 }
 
+- (void)application:(NSApplication*)_ openFiles:(NSArray<NSString*>*)filenames {
+  if (!filenames.count) return;
+  NSMutableArray<NSURL*>* urls = [NSMutableArray new];
+  for (NSString* path in filenames) {
+    if (![path isKindOfClass:[NSString class]] || !path.length) continue;
+    [urls addObject:[NSURL fileURLWithPath:path]];
+  }
+  if (!urls.count) {
+    [NSApp replyToOpenOrPrint:NSApplicationDelegateReplyFailure];
+    return;
+  }
+  if (!self.windows.count) {
+    if (!self.pendingOpenURLs) self.pendingOpenURLs = [NSMutableArray new];
+    [self.pendingOpenURLs addObjectsFromArray:urls];
+  } else {
+    [self openURLsInBrowser:urls];
+  }
+  [NSApp replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
+}
+
 - (void)openPendingURLsIfNeeded {
   if (!self.pendingOpenURLs.count) return;
   NSArray<NSURL*>* urls = self.pendingOpenURLs.copy;
