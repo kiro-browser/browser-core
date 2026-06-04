@@ -1,2 +1,33 @@
-build
-.claude
+# Build output
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.cmake
+!CMakeLists.txt
+
+# Local package output
+dist/
+
+# macOS metadata
+.DS_Store
+._*
+*.swp
+*.swo
+
+# Editor / agent local state
+.claude/
+.vscode/
+.idea/
+
+# Logs and crash reports
+*.log
+*.ips
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
