@@ -35,6 +35,26 @@ To run the application:
 open build/BuildBrowser.app
 ```
 
+## Generate an Installer
+
+Build an installable macOS package:
+
+```bash
+chmod +x package.sh
+./package.sh
+```
+
+The generated installer is written to `dist/BuildBrowser-<version>-<build>.pkg`.
+Opening that package installs `BuildBrowser.app` into `/Applications`.
+To build and install in one command:
+
+```bash
+./package.sh --install
+```
+
+The same command also writes `dist/BuildBrowser-<version>-<build>.app.zip`,
+which can be used by the built-in updater manifest as the app bundle archive.
+
 ## Project Structure
 
 ```
