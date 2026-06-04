@@ -45,7 +45,8 @@ chmod +x package.sh
 ```
 
 The generated installer is written to `dist/BuildBrowser-<version>-<build>.pkg`.
-Opening that package installs `BuildBrowser.app` into `/Applications`.
+Opening that package installs `BuildBrowser.app` into `/Applications` and
+registers it with macOS so it appears in Launchpad and application search.
 To build and install in one command:
 
 ```bash
