@@ -24,6 +24,8 @@
   <key>CFBundleURLTypes</key>
   <array>
     <dict>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
       <key>CFBundleURLName</key>
       <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}.web</string>
       <key>CFBundleURLSchemes</key>
