@@ -26,4 +26,5 @@
 - (void)openFindBar:(id)sender;
 - (void)findNext:(id)sender;
 - (void)togglePinCurrentTab:(id)sender;
+- (void)toggleSidebarMode:(id)sender;
 @end

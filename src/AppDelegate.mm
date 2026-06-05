@@ -290,6 +290,9 @@ static NSString* const kDefaultBrowserPromptSeen = @"BuildBrowser.defaultBrowser
   [viewMenu addItemWithTitle:@"Back" action:@selector(goBack:) keyEquivalent:@"["];
   [viewMenu addItemWithTitle:@"Forward" action:@selector(goForward:) keyEquivalent:@"]"];
   [viewMenu addItem:[NSMenuItem separatorItem]];
+  NSMenuItem* sidebarItem = [viewMenu addItemWithTitle:@"Toggle Sidebar" action:@selector(toggleSidebarMode:) keyEquivalent:@"s"];
+  sidebarItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+  [viewMenu addItem:[NSMenuItem separatorItem]];
   [viewMenu addItemWithTitle:@"Pin Tab" action:@selector(togglePinCurrentTab:) keyEquivalent:@"p"];
   [viewMenu addItem:[NSMenuItem separatorItem]];
   [viewMenu addItemWithTitle:@"Bookmarks" action:@selector(showBookmarks:) keyEquivalent:@"b"];

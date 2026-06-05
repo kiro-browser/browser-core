@@ -24,6 +24,7 @@ static NSString* const kJavascript      = @"KBrowser.javascriptEnabled";
 static NSString* const kBlockPopups     = @"KBrowser.blockPopups";
 static NSString* const kPrivateBrowsing = @"KBrowser.privateBrowsing";
 static NSString* const kBookmarksBar    = @"KBrowser.showBookmarksBar";
+static NSString* const kSidebar         = @"KBrowser.showSidebar";
 static NSString* const kAdBlock         = @"KBrowser.adBlockEnabled";
 static NSString* const kAutoCheckUpdates = @"KBrowser.autoCheckUpdates";
 
@@ -119,6 +120,7 @@ static NSDictionary* DefaultDomainLaunchers(void) {
         kBlockPopups:     @YES,
         kPrivateBrowsing: @NO,
         kBookmarksBar:    @YES,
+        kSidebar:         @NO,
         kAdBlock:         @YES,
         kAutoCheckUpdates:@YES,
     };
@@ -172,6 +174,7 @@ BOOL_PREF(javascriptEnabled, setJavascriptEnabled, kJavascript)
 BOOL_PREF(blockPopups,       setBlockPopups,       kBlockPopups)
 BOOL_PREF(privateBrowsing,   setPrivateBrowsing,   kPrivateBrowsing)
 BOOL_PREF(showBookmarksBar,  setShowBookmarksBar,  kBookmarksBar)
+BOOL_PREF(showSidebar,       setShowSidebar,       kSidebar)
 BOOL_PREF(adBlockEnabled,    setAdBlockEnabled,    kAdBlock)
 BOOL_PREF(autoCheckUpdates,  setAutoCheckUpdates,  kAutoCheckUpdates)
 

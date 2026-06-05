@@ -96,6 +96,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     NSButton*     _autoCheckToggle;
     // Appearance
     NSButton*     _bookmarksBarToggle;
+    NSButton*     _sidebarToggle;
     // General
     NSWindow*     _parentWindow;
 }
@@ -430,17 +431,28 @@ static NSTextField* makeRowLabel(NSString* text) {
     title.font  = [NSFont boldSystemFontOfSize:17];
     [v addSubview:title]; y -= 36;
 
-    NSView* box = makeGroupBox(16, y - 46, W - 32, 46);
+    NSView* box = makeGroupBox(16, y - 90, W - 32, 90);
     [v addSubview:box];
 
     NSTextField* lbl = makeRowLabel(@"Show bookmarks bar");
-    lbl.frame = NSMakeRect(16, 14, W - 32 - 60, 18);
+    lbl.frame = NSMakeRect(16, 58, W - 32 - 60, 18);
     [box addSubview:lbl];
 
     _bookmarksBarToggle = [NSButton buttonWithTitle:@"" target:nil action:nil];
     _bookmarksBarToggle.buttonType = NSButtonTypeSwitch;
-    _bookmarksBarToggle.frame      = NSMakeRect(W - 32 - 52, 12, 44, 22);
+    _bookmarksBarToggle.frame      = NSMakeRect(W - 32 - 52, 56, 44, 22);
     [box addSubview:_bookmarksBarToggle];
+
+    [box addSubview:makeSeparator(45, W - 32)];
+
+    NSTextField* sidebarLbl = makeRowLabel(@"Show sidebar");
+    sidebarLbl.frame = NSMakeRect(16, 14, W - 32 - 60, 18);
+    [box addSubview:sidebarLbl];
+
+    _sidebarToggle = [NSButton buttonWithTitle:@"" target:nil action:nil];
+    _sidebarToggle.buttonType = NSButtonTypeSwitch;
+    _sidebarToggle.frame      = NSMakeRect(W - 32 - 52, 12, 44, 22);
+    [box addSubview:_sidebarToggle];
 
     return v;
 }
@@ -503,6 +515,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     _adBlockToggle.state           = s.adBlockEnabled    ? NSControlStateValueOn : NSControlStateValueOff;
     _autoCheckToggle.state         = s.autoCheckUpdates  ? NSControlStateValueOn : NSControlStateValueOff;
     _bookmarksBarToggle.state      = s.showBookmarksBar  ? NSControlStateValueOn : NSControlStateValueOff;
+    _sidebarToggle.state           = s.showSidebar       ? NSControlStateValueOn : NSControlStateValueOff;
     [self reloadDefaultBrowserStatus];
 }
 
@@ -530,6 +543,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     s.adBlockEnabled    = (_adBlockToggle.state         == NSControlStateValueOn);
     s.autoCheckUpdates  = (_autoCheckToggle.state       == NSControlStateValueOn);
     s.showBookmarksBar  = (_bookmarksBarToggle.state    == NSControlStateValueOn);
+    s.showSidebar       = (_sidebarToggle.state          == NSControlStateValueOn);
     [[NSNotificationCenter defaultCenter] postNotificationName:@"BuildBrowserSettingsDidChangeNotification"
                                                         object:self];
     [_parentWindow endSheet:self.window];

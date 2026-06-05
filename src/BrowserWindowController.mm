@@ -64,6 +64,10 @@ static const CGFloat kProgressH     = 3.0;
 static const CGFloat kBtnSize       = 28.0;
 /// Find bar height in points.
 static const CGFloat kFindBarH      = 36.0;
+/// Left sidebar width in points.
+static const CGFloat kSidebarW      = 240.0;
+/// Header/action area height inside the sidebar.
+static const CGFloat kSidebarHeaderH = 88.0;
 
 #pragma mark - ProgressBarView
 
@@ -92,7 +96,7 @@ static const CGFloat kFindBarH      = 36.0;
 
 #pragma mark - Private Interface
 
-@interface BrowserWindowController () <NSWindowDelegate, NSTextFieldDelegate>
+@interface BrowserWindowController () <NSWindowDelegate, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate>
 
 // Managers
 @property (strong) TabManager*      tabManager;
@@ -101,6 +105,12 @@ static const CGFloat kFindBarH      = 36.0;
 @property (strong) NSView*          toolbarView;
 @property (strong) NSView*          tabBarView;
 @property (strong) NSView*          bookmarksBarView;
+@property (strong) NSView*          sidebarView;
+@property (strong) NSTableView*     sidebarTabsTableView;
+@property (strong) NSTextField*     sidebarTitleLabel;
+@property (strong) NSButton*        sidebarNewTabBtn;
+@property (strong) NSArray<NSButton*>* sidebarActionButtons;
+@property (strong) NSView*          sidebarHeaderSeparator;
 @property (strong) NSView*          findBarView;
 @property (strong) ProgressBarView* progressBar;
 @property (strong) NSView*          contentArea;
@@ -114,6 +124,7 @@ static const CGFloat kFindBarH      = 36.0;
 @property (strong) NSTextField*     urlField;
 @property (strong) NSButton*        readerModeBtn;
 @property (strong) NSButton*        bookmarkStarBtn;
+@property (strong) NSButton*        sidebarModeBtn;
 @property (strong) NSButton*        profileBtn;
 @property (strong) NSArray<NSButton*>* toolbarRightButtons;
 
@@ -335,22 +346,23 @@ static const CGFloat kFindBarH      = 36.0;
     [_toolbarView addSubview:_reloadBtn];
     [_toolbarView addSubview:_homeBtn];
 
-    // Right toolbar buttons: profile, bookmark, bookmarks, history, downloads, settings, new tab
-    NSArray* syms  = @[@"person.circle", @"bookmark",       @"books.vertical", @"clock",   @"arrow.down.circle", @"gearshape", @"plus"];
-    NSArray* tips  = @[@"Profile",         @"Bookmark (⌘D)",  @"Bookmarks (⌘B)", @"History (⌘Y)", @"Downloads (⌘J)", @"Settings (⌘,)", @"New Tab (⌘T)"];
-    SEL acts[] = { @selector(showProfileMenu:), @selector(toggleBookmark:), @selector(showBookmarks:), @selector(showHistory:),
-                   @selector(showDownloads:),  @selector(showSettings:),  @selector(newTab:) };
-    CGFloat rBase = W - 7 * 32 - 8;
+    // Right toolbar buttons: sidebar, profile, bookmark, bookmarks, history, downloads, settings, new tab
+    NSArray* syms  = @[@"sidebar.left", @"person.circle", @"bookmark",       @"books.vertical", @"clock",   @"arrow.down.circle", @"gearshape", @"plus"];
+    NSArray* tips  = @[@"Sidebar",      @"Profile",       @"Bookmark (⌘D)",  @"Bookmarks (⌘B)", @"History (⌘Y)", @"Downloads (⌘J)", @"Settings (⌘,)", @"New Tab (⌘T)"];
+    SEL acts[] = { @selector(toggleSidebarMode:), @selector(showProfileMenu:), @selector(toggleBookmark:), @selector(showBookmarks:), @selector(showHistory:),
+                   @selector(showDownloads:),     @selector(showSettings:),  @selector(newTab:) };
+    CGFloat rBase = W - 8 * 32 - 8;
     NSMutableArray<NSButton*>* rightButtons = [NSMutableArray new];
-    for (NSInteger i = 0; i < 7; i++) {
+    for (NSInteger i = 0; i < 8; i++) {
         NSButton* btn = [self makeSymbolButton:syms[i] size:15 tooltip:tips[i]];
         btn.frame = NSMakeRect(rBase + i * 32, (kToolbarH-kBtnSize)/2, kBtnSize, kBtnSize);
         btn.autoresizingMask = NSViewMinXMargin;
         btn.target = self; btn.action = acts[i];
         [_toolbarView addSubview:btn];
         [rightButtons addObject:btn];
-        if (i == 0) _profileBtn = btn;
-        if (i == 1) _bookmarkStarBtn = btn;
+        if (i == 0) _sidebarModeBtn = btn;
+        if (i == 1) _profileBtn = btn;
+        if (i == 2) _bookmarkStarBtn = btn;
     }
     _toolbarRightButtons = rightButtons.copy;
     [self updateProfileButtonIcon];
@@ -438,6 +450,8 @@ static const CGFloat kFindBarH      = 36.0;
     _bookmarksBarView.hidden = ![SettingsManager profileShared].showBookmarksBar;
     [self rebuildBookmarksBar];
 
+    [self buildSidebarInRoot:root width:W height:H];
+
     // ── Find bar ──
     _findBarView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, W, kFindBarH)];
     _findBarView.wantsLayer = YES;
@@ -491,6 +505,79 @@ static const CGFloat kFindBarH      = 36.0;
     [self layoutChrome];
 }
 
+- (void)buildSidebarInRoot:(NSView*)root width:(CGFloat)W height:(CGFloat)H {
+    _sidebarView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, kSidebarW, H - kToolbarH - kProgressH)];
+    _sidebarView.wantsLayer = YES;
+    _sidebarView.hidden = ![SettingsManager profileShared].showSidebar;
+    [root addSubview:_sidebarView];
+
+    NSVisualEffectView* bg = [[NSVisualEffectView alloc] initWithFrame:_sidebarView.bounds];
+    bg.material = NSVisualEffectMaterialSidebar;
+    bg.blendingMode = NSVisualEffectBlendingModeWithinWindow;
+    bg.state = NSVisualEffectStateActive;
+    bg.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    [_sidebarView addSubview:bg];
+
+    _sidebarTitleLabel = [NSTextField labelWithString:@"Tabs"];
+    _sidebarTitleLabel.frame = NSMakeRect(14, NSHeight(_sidebarView.bounds) - 32, 120, 20);
+    _sidebarTitleLabel.font = [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold];
+    _sidebarTitleLabel.autoresizingMask = NSViewMinYMargin;
+    [_sidebarView addSubview:_sidebarTitleLabel];
+
+    _sidebarNewTabBtn = [self sidebarActionButtonWithSymbol:@"plus" tooltip:@"New Tab" action:@selector(newTab:)];
+    _sidebarNewTabBtn.frame = NSMakeRect(kSidebarW - 40, NSHeight(_sidebarView.bounds) - 36, 28, 28);
+    _sidebarNewTabBtn.autoresizingMask = NSViewMinXMargin | NSViewMinYMargin;
+    [_sidebarView addSubview:_sidebarNewTabBtn];
+
+    NSArray* syms = @[@"books.vertical", @"clock", @"arrow.down.circle", @"gearshape"];
+    NSArray* tips = @[@"Bookmarks", @"History", @"Downloads", @"Settings"];
+    SEL acts[] = { @selector(showBookmarks:), @selector(showHistory:), @selector(showDownloads:), @selector(showSettings:) };
+    CGFloat actionY = NSHeight(_sidebarView.bounds) - 74;
+    NSMutableArray<NSButton*>* actionButtons = [NSMutableArray new];
+    for (NSInteger i = 0; i < 4; i++) {
+        NSButton* btn = [self sidebarActionButtonWithSymbol:syms[i] tooltip:tips[i] action:acts[i]];
+        btn.frame = NSMakeRect(12 + i * 34, actionY, 30, 28);
+        btn.autoresizingMask = NSViewMinYMargin;
+        [_sidebarView addSubview:btn];
+        [actionButtons addObject:btn];
+    }
+    _sidebarActionButtons = actionButtons.copy;
+
+    _sidebarHeaderSeparator = [[NSView alloc] initWithFrame:NSMakeRect(0, NSHeight(_sidebarView.bounds) - kSidebarHeaderH, kSidebarW, 1)];
+    _sidebarHeaderSeparator.wantsLayer = YES;
+    _sidebarHeaderSeparator.layer.backgroundColor = [NSColor separatorColor].CGColor;
+    _sidebarHeaderSeparator.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
+    [_sidebarView addSubview:_sidebarHeaderSeparator];
+
+    NSScrollView* scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, kSidebarW, NSHeight(_sidebarView.bounds) - kSidebarHeaderH)];
+    scroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    scroll.hasVerticalScroller = YES;
+    scroll.drawsBackground = NO;
+
+    _sidebarTabsTableView = [[NSTableView alloc] initWithFrame:scroll.bounds];
+    _sidebarTabsTableView.backgroundColor = [NSColor clearColor];
+    _sidebarTabsTableView.headerView = nil;
+    _sidebarTabsTableView.rowHeight = 46;
+    _sidebarTabsTableView.intercellSpacing = NSMakeSize(0, 0);
+    _sidebarTabsTableView.selectionHighlightStyle = NSTableViewSelectionHighlightStyleRegular;
+    _sidebarTabsTableView.dataSource = self;
+    _sidebarTabsTableView.delegate = self;
+
+    NSTableColumn* col = [[NSTableColumn alloc] initWithIdentifier:@"tab"];
+    col.width = kSidebarW;
+    [_sidebarTabsTableView addTableColumn:col];
+    scroll.documentView = _sidebarTabsTableView;
+    [_sidebarView addSubview:scroll];
+}
+
+- (NSButton*)sidebarActionButtonWithSymbol:(NSString*)symbol tooltip:(NSString*)tooltip action:(SEL)action {
+    NSButton* btn = [self makeSymbolButton:symbol size:14 tooltip:tooltip];
+    btn.target = self;
+    btn.action = action;
+    btn.bezelStyle = NSBezelStyleTexturedRounded;
+    return btn;
+}
+
 /// Whether the bookmarks bar is currently visible.
 - (BOOL)bookmarksBarVisible {
     return [SettingsManager profileShared].showBookmarksBar && !_bookmarksBarView.hidden;
@@ -526,33 +613,50 @@ static const CGFloat kFindBarH      = 36.0;
     NSView* root = self.window.contentView;
     CGFloat W = root.bounds.size.width;
     CGFloat H = root.bounds.size.height;
+    BOOL sidebarVisible = [SettingsManager profileShared].showSidebar;
+    CGFloat sidebarW = sidebarVisible ? kSidebarW : 0;
 
     _toolbarView.frame = NSMakeRect(0, H - kToolbarH, W, kToolbarH);
     _progressBar.frame = NSMakeRect(0, NSMinY(_toolbarView.frame) - kProgressH, W, kProgressH);
-    _tabBarView.frame = NSMakeRect(0, NSMinY(_progressBar.frame) - kTabBarH, W, kTabBarH);
+    _tabBarView.hidden = sidebarVisible;
+    _tabBarView.frame = NSMakeRect(sidebarW, NSMinY(_progressBar.frame) - kTabBarH, W - sidebarW, kTabBarH);
 
     BOOL bookmarksVisible = [self bookmarksBarVisible];
-    CGFloat contentTop = NSMinY(_tabBarView.frame);
+    CGFloat contentTop = sidebarVisible ? NSMinY(_progressBar.frame) : NSMinY(_tabBarView.frame);
     if (bookmarksVisible) {
-        _bookmarksBarView.frame = NSMakeRect(0, contentTop - kBookmarksBarH, W, kBookmarksBarH);
+        _bookmarksBarView.frame = NSMakeRect(sidebarW, contentTop - kBookmarksBarH, W - sidebarW, kBookmarksBarH);
         contentTop = NSMinY(_bookmarksBarView.frame);
     } else {
-        _bookmarksBarView.frame = NSMakeRect(0, contentTop - kBookmarksBarH, W, kBookmarksBarH);
+        _bookmarksBarView.frame = NSMakeRect(sidebarW, contentTop - kBookmarksBarH, W - sidebarW, kBookmarksBarH);
     }
 
     CGFloat bottom = _findBarVisible ? kFindBarH : 0;
     CGFloat contentH = MAX(0, contentTop - bottom);
 
     if (!_contentArea) {
-        _contentArea = [[NSView alloc] initWithFrame:NSMakeRect(0, bottom, W, contentH)];
+        _contentArea = [[NSView alloc] initWithFrame:NSMakeRect(sidebarW, bottom, W - sidebarW, contentH)];
         _contentArea.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         [root addSubview:_contentArea];
     } else {
-        _contentArea.frame = NSMakeRect(0, bottom, W, contentH);
+        _contentArea.frame = NSMakeRect(sidebarW, bottom, W - sidebarW, contentH);
+    }
+
+    _sidebarView.hidden = !sidebarVisible;
+    _sidebarView.frame = NSMakeRect(0, bottom, kSidebarW, MAX(0, NSMinY(_progressBar.frame) - bottom));
+    NSView* sidebarScroll = _sidebarTabsTableView.enclosingScrollView;
+    sidebarScroll.frame = NSMakeRect(0, 0, kSidebarW, MAX(0, NSHeight(_sidebarView.bounds) - kSidebarHeaderH));
+    _sidebarTitleLabel.frame = NSMakeRect(14, NSHeight(_sidebarView.bounds) - 32, 120, 20);
+    _sidebarNewTabBtn.frame = NSMakeRect(kSidebarW - 40, NSHeight(_sidebarView.bounds) - 36, 28, 28);
+    _sidebarHeaderSeparator.frame = NSMakeRect(0, NSHeight(_sidebarView.bounds) - kSidebarHeaderH, kSidebarW, 1);
+    CGFloat actionY = NSHeight(_sidebarView.bounds) - 74;
+    for (NSInteger i = 0; i < (NSInteger)_sidebarActionButtons.count; i++) {
+        _sidebarActionButtons[i].frame = NSMakeRect(12 + i * 34, actionY, 30, 28);
     }
 
     _findBarView.frame = NSMakeRect(0, 0, W, kFindBarH);
     [self layoutToolbarControls];
+    [self updateSidebarModeButton];
+    [self rebuildSidebarTabs];
 
     for (BrowserTab* t in _tabManager.tabs) {
         t.webView.frame = _contentArea.bounds;
@@ -587,6 +691,7 @@ static const CGFloat kFindBarH      = 36.0;
     [SidePanel shared].openURLCallback = ^(NSString* url) {
         [ws.tabManager newTabWithURL:url];
         [ws rebuildTabStrip];
+        [ws rebuildSidebarTabs];
     };
 }
 
@@ -599,6 +704,7 @@ static const CGFloat kFindBarH      = 36.0;
     tab.webView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     tab.webView.hidden           = YES;
     [self rebuildTabStrip];
+    [self rebuildSidebarTabs];
 }
 
 - (void)onTabClosedAtIndex:(NSInteger)_ {
@@ -606,6 +712,7 @@ static const CGFloat kFindBarH      = 36.0;
         if ([subview isKindOfClass:[WKWebView class]]) [subview removeFromSuperview];
     }
     [self rebuildTabStrip];
+    [self rebuildSidebarTabs];
 }
 
 - (void)onTabSwitched:(BrowserTab*)tab atIndex:(NSInteger)_ {
@@ -626,12 +733,14 @@ static const CGFloat kFindBarH      = 36.0;
         t.tabButton.state = (t == tab) ? NSControlStateValueOn : NSControlStateValueOff;
     [self.window setTitle:tab.title.length ? tab.title : @"KBrowser"];
     [self rebuildTabStrip];
+    [self rebuildSidebarTabs];
 }
 
 - (void)onTitleChanged:(NSString*)title forTab:(BrowserTab*)tab {
     if (tab == _tabManager.activeTab)
         [self.window setTitle:title.length ? title : @"BuildBrowser"];
     [self rebuildTabStrip];
+    [self rebuildSidebarTabs];
     if (![SettingsManager profileShared].privateBrowsing && tab.url.length)
         [[HistoryManager profileShared] recordVisitWithTitle:title url:tab.url];
 }
@@ -642,6 +751,7 @@ static const CGFloat kFindBarH      = 36.0;
         [self updateSecurityIndicatorForURL:url];
         [self updateBookmarkStar];
     }
+    [self rebuildSidebarTabs];
 }
 
 - (void)onLoadProgress:(double)p forTab:(BrowserTab*)tab {
@@ -662,6 +772,7 @@ static const CGFloat kFindBarH      = 36.0;
 
 - (void)onFaviconChanged:(NSImage*)icon forTab:(BrowserTab*)tab {
     [self rebuildTabStrip];
+    [self rebuildSidebarTabs];
 }
 
 /**
@@ -691,6 +802,7 @@ static const CGFloat kFindBarH      = 36.0;
 - (void)newTab:(id)_ {
     [_tabManager newTabWithURL:[SettingsManager profileShared].homepage];
     [self rebuildTabStrip];
+    [self rebuildSidebarTabs];
 }
 
 /**
@@ -702,6 +814,7 @@ static const CGFloat kFindBarH      = 36.0;
     if (!url.length) return;
     [_tabManager newTabWithURL:url];
     [self rebuildTabStrip];
+    [self rebuildSidebarTabs];
     [self.window makeKeyAndOrderFront:nil];
 }
 
@@ -768,6 +881,113 @@ static const CGFloat kFindBarH      = 36.0;
     if (!tab) return;
     [_tabManager setPinned:!tab.pinned forTabAtIndex:index];
     [self rebuildTabStrip];
+    [self rebuildSidebarTabs];
+}
+
+/// Toggle the in-window left sidebar.
+- (void)toggleSidebarMode:(id)_ {
+    SettingsManager* settings = [SettingsManager profileShared];
+    settings.showSidebar = !settings.showSidebar;
+    [self layoutChrome];
+    [self rebuildTabStrip];
+    [self rebuildSidebarTabs];
+}
+
+- (void)updateSidebarModeButton {
+    BOOL enabled = [SettingsManager profileShared].showSidebar;
+    _sidebarModeBtn.contentTintColor = enabled ? [NSColor controlAccentColor] : [NSColor secondaryLabelColor];
+    _sidebarModeBtn.toolTip = enabled ? @"Hide Sidebar" : @"Show Sidebar";
+}
+
+- (void)rebuildSidebarTabs {
+    if (!_sidebarTabsTableView) return;
+    [_sidebarTabsTableView reloadData];
+    NSInteger active = _tabManager.activeIndex;
+    if (active >= 0 && active < (NSInteger)_tabManager.tabs.count) {
+        [_sidebarTabsTableView selectRowIndexes:[NSIndexSet indexSetWithIndex:active] byExtendingSelection:NO];
+        [_sidebarTabsTableView scrollRowToVisible:active];
+    }
+}
+
+- (void)closeSidebarTabButtonClicked:(NSButton*)btn {
+    [_tabManager closeTabAtIndex:btn.tag];
+    [self rebuildSidebarTabs];
+}
+
+- (NSInteger)numberOfRowsInTableView:(NSTableView*)tableView {
+    if (tableView != _sidebarTabsTableView) return 0;
+    return (NSInteger)_tabManager.tabs.count;
+}
+
+- (NSView*)tableView:(NSTableView*)tableView viewForTableColumn:(NSTableColumn*)_ row:(NSInteger)row {
+    if (tableView != _sidebarTabsTableView || row < 0 || row >= (NSInteger)_tabManager.tabs.count) return nil;
+    NSTableCellView* cell = [tableView makeViewWithIdentifier:@"sidebarTabCell" owner:self];
+    if (!cell) {
+        cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, kSidebarW, 46)];
+        cell.identifier = @"sidebarTabCell";
+
+        NSImageView* favicon = [[NSImageView alloc] initWithFrame:NSMakeRect(12, 23, 16, 16)];
+        favicon.identifier = @"favicon";
+        favicon.imageScaling = NSImageScaleProportionallyUpOrDown;
+        [cell addSubview:favicon];
+
+        NSTextField* title = [NSTextField labelWithString:@""];
+        title.identifier = @"title";
+        title.frame = NSMakeRect(36, 24, kSidebarW - 72, 16);
+        title.font = [NSFont systemFontOfSize:12 weight:NSFontWeightMedium];
+        title.lineBreakMode = NSLineBreakByTruncatingTail;
+        [cell addSubview:title];
+
+        NSTextField* url = [NSTextField labelWithString:@""];
+        url.identifier = @"url";
+        url.frame = NSMakeRect(36, 8, kSidebarW - 72, 14);
+        url.font = [NSFont systemFontOfSize:10];
+        url.textColor = [NSColor secondaryLabelColor];
+        url.lineBreakMode = NSLineBreakByTruncatingMiddle;
+        [cell addSubview:url];
+
+        NSImageView* pin = [[NSImageView alloc] initWithFrame:NSMakeRect(kSidebarW - 44, 28, 10, 10)];
+        pin.identifier = @"pin";
+        pin.image = [NSImage imageWithSystemSymbolName:@"pin.fill" accessibilityDescription:nil];
+        pin.contentTintColor = [NSColor secondaryLabelColor];
+        [cell addSubview:pin];
+
+        NSButton* close = [self makeSymbolButton:@"xmark" size:9 tooltip:@"Close Tab"];
+        close.identifier = @"close";
+        close.frame = NSMakeRect(kSidebarW - 32, 14, 20, 20);
+        close.target = self;
+        close.action = @selector(closeSidebarTabButtonClicked:);
+        [cell addSubview:close];
+    }
+
+    BrowserTab* tab = _tabManager.tabs[row];
+    BOOL active = (row == _tabManager.activeIndex);
+    for (NSView* sub in cell.subviews) {
+        if ([sub.identifier isEqualToString:@"favicon"]) {
+            ((NSImageView*)sub).image = tab.favicon ?: [NSImage imageWithSystemSymbolName:@"globe" accessibilityDescription:nil];
+        } else if ([sub.identifier isEqualToString:@"title"]) {
+            NSTextField* label = (NSTextField*)sub;
+            label.stringValue = tab.title.length ? tab.title : @"New Tab";
+            label.textColor = active ? [NSColor labelColor] : [NSColor secondaryLabelColor];
+        } else if ([sub.identifier isEqualToString:@"url"]) {
+            ((NSTextField*)sub).stringValue = tab.url.length ? tab.url : @"";
+        } else if ([sub.identifier isEqualToString:@"pin"]) {
+            sub.hidden = !tab.pinned;
+        } else if ([sub.identifier isEqualToString:@"close"]) {
+            NSButton* close = (NSButton*)sub;
+            close.tag = row;
+            close.hidden = tab.pinned;
+        }
+    }
+    return cell;
+}
+
+- (void)tableViewSelectionDidChange:(NSNotification*)notification {
+    if (notification.object != _sidebarTabsTableView) return;
+    NSInteger row = _sidebarTabsTableView.selectedRow;
+    if (row >= 0 && row < (NSInteger)_tabManager.tabs.count && row != _tabManager.activeIndex) {
+        [_tabManager switchToIndex:row];
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
@@ -1000,6 +1220,7 @@ static const CGFloat kFindBarH      = 36.0;
     [self layoutChrome];
     [self rebuildBookmarksBar];
     [self rebuildTabStrip];
+    [self rebuildSidebarTabs];
 }
 
 // ───────────────────────────────────────────────────────────────────────────────

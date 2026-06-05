@@ -75,6 +75,8 @@
 
 /// Whether the bookmarks bar is visible (default: YES).
 @property (assign) BOOL showBookmarksBar;
+/// Whether the in-window left sidebar is visible (default: NO).
+@property (assign) BOOL showSidebar;
 
 /**
  * @brief   Reset all settings to their default values.
