@@ -1,16 +1,42 @@
+/**
+ * @file      DownloadsPanel.mm
+ * @project   BuildBrowser
+ * @brief     Downloads sidebar panel UI.
+ *
+ * @details   A floating NSWindowController that displays all current and
+ *            completed downloads in a table view. Each row shows an icon,
+ *            filename, progress bar, status text, and an action button
+ *            (Show / reveal in Finder). Registers an onUpdate callback
+ *            on the DownloadManager to refresh automatically.
+ *
+ * @author    BuildBrowser Team
+ * @date      2024-2026
+ */
+
 #import "DownloadManager.h"
 #import "ProfileManager.h"
+
+#pragma mark - Interface
 
 @interface DownloadsPanel : NSWindowController <NSTableViewDataSource, NSTableViewDelegate>
 + (instancetype)shared;
 - (void)show;
 @end
 
+#pragma mark - Implementation
+
 @implementation DownloadsPanel {
+    /// The table view displaying download items.
     NSTableView* _tableView;
+    /// Label shown when there are no downloads.
     NSTextField* _emptyLabel;
 }
 
+/**
+ * @brief   Returns the shared DownloadsPanel singleton.
+ *
+ * @return  The singleton instance.
+ */
 + (instancetype)shared {
     static DownloadsPanel* inst;
     static dispatch_once_t t;
@@ -18,6 +44,15 @@
     return inst;
 }
 
+/**
+ * @brief   Initialize the panel window and UI.
+ *
+ * @details Creates a closable, resizable window with a frosted sidebar
+ *          background. Registers for DownloadManager updates so the table
+ *          refreshes automatically.
+ *
+ * @return  An initialized DownloadsPanel.
+ */
 - (instancetype)init {
     NSWindow* win = [[NSWindow alloc]
         initWithContentRect:NSMakeRect(0, 0, 420, 400)
@@ -32,6 +67,7 @@
     if (!self) return nil;
     [self buildUI];
 
+    /// Auto-refresh the table when download state changes.
     __weak DownloadsPanel* weakSelf = self;
     [DownloadManager profileShared].onUpdate = ^{
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -44,6 +80,9 @@
     return self;
 }
 
+/**
+ * @brief   Build the panel's UI: frosted background, header, table, empty state.
+ */
 - (void)buildUI {
     NSView* root = self.window.contentView;
     root.wantsLayer = YES;
@@ -73,14 +112,14 @@
     clearBtn.autoresizingMask = NSViewMinXMargin | NSViewMinYMargin;
     [root addSubview:clearBtn];
 
-    // Separator
+    // Separator below header
     NSView* sep = [[NSView alloc] initWithFrame:NSMakeRect(0, H - 56, W, 1)];
     sep.wantsLayer = YES;
     sep.layer.backgroundColor = [NSColor separatorColor].CGColor;
     sep.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
     [root addSubview:sep];
 
-    // Table
+    // Scrollable table
     NSScrollView* scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, W, H - 57)];
     scroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     scroll.hasVerticalScroller = YES;
@@ -102,7 +141,7 @@
     scroll.documentView = _tableView;
     [root addSubview:scroll];
 
-    // Empty state
+    // Empty state label
     _emptyLabel = [NSTextField labelWithString:@"No downloads yet"];
     _emptyLabel.frame     = NSMakeRect(0, H / 2 - 30, W, 40);
     _emptyLabel.alignment = NSTextAlignmentCenter;
@@ -112,18 +151,29 @@
     [root addSubview:_emptyLabel];
 }
 
+/**
+ * @brief   Show the downloads panel.
+ */
 - (void)show {
     [_tableView reloadData];
     _emptyLabel.hidden = ([DownloadManager profileShared].items.count > 0);
     [self.window makeKeyAndOrderFront:nil];
 }
 
-// ── NSTableViewDataSource ─────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name NSTableViewDataSource
+// ───────────────────────────────────────────────────────────────────────────────
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView*)_ {
     return (NSInteger)[DownloadManager profileShared].items.count;
 }
 
+/**
+ * @brief   Build or update a table cell for a download item.
+ *
+ * @details Each cell displays an icon (symbol), filename, progress bar,
+ *          status text, and an action button. Reuses views by identifier.
+ */
 - (NSView*)tableView:(NSTableView*)tv viewForTableColumn:(NSTableColumn*)_ row:(NSInteger)row {
     NSTableCellView* cell = [tv makeViewWithIdentifier:@"dl" owner:self];
     if (!cell) {
@@ -239,8 +289,15 @@
     return cell;
 }
 
-// ── Actions ───────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Actions
+// ───────────────────────────────────────────────────────────────────────────────
 
+/**
+ * @brief   Reveal the downloaded file in Finder via the action button.
+ *
+ * @param   btn  The button whose tag indicates the row index.
+ */
 - (void)actionButtonClicked:(NSButton*)btn {
     NSInteger row = btn.tag;
     NSArray<DownloadItem*>* items = [DownloadManager profileShared].items;
@@ -251,6 +308,9 @@
                          inFileViewerRootedAtPath:@""];
 }
 
+/**
+ * @brief   Reveal the file in Finder on double-click.
+ */
 - (void)revealInFinder:(id)_ {
     NSInteger row = _tableView.clickedRow;
     if (row < 0) return;
@@ -262,13 +322,16 @@
                          inFileViewerRootedAtPath:@""];
 }
 
+/**
+ * @brief   Clear all completed downloads from the display.
+ */
 - (void)clearCompleted:(id)_ {
     NSMutableArray* items = [[DownloadManager profileShared].items mutableCopy];
     [items filterUsingPredicate:[NSPredicate predicateWithBlock:
         ^BOOL(DownloadItem* i, NSDictionary* _) {
             return i.state == DownloadStateInProgress;
         }]];
-    // DownloadManager doesn't expose a remove API yet — reload is enough for display
     [_tableView reloadData];
 }
+
 @end

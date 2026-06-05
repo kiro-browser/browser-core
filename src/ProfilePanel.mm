@@ -1,16 +1,41 @@
+/**
+ * @file      ProfilePanel.mm
+ * @project   BuildBrowser
+ * @brief     Profile management sheet — add, delete, change picture.
+ *
+ * @details   A sheet-based NSWindowController that lists profiles in a
+ *            table and allows the user to create new profiles, delete
+ *            existing ones (except the active profile), and change or
+ *            remove profile avatars.
+ *
+ * @author    BuildBrowser Team
+ * @date      2024-2026
+ */
+
 #import <Cocoa/Cocoa.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "ProfileManager.h"
+
+#pragma mark - Interface
 
 @interface ProfilePanel : NSWindowController <NSTableViewDataSource, NSTableViewDelegate>
 + (void)showAsSheetOnWindow:(NSWindow*)parent;
 @end
 
+#pragma mark - Implementation
+
 @implementation ProfilePanel {
+    /// Table displaying all profiles.
     NSTableView* _tableView;
+    /// The parent window for sheet presentation.
     NSWindow*    _parentWindow;
 }
 
+/**
+ * @brief   Returns the shared ProfilePanel singleton.
+ *
+ * @return  The singleton instance.
+ */
 + (instancetype)shared {
     static ProfilePanel* inst;
     static dispatch_once_t t;
@@ -18,12 +43,22 @@
     return inst;
 }
 
+/**
+ * @brief   Show the profile management panel as a sheet.
+ *
+ * @param   parent  The parent window to attach the sheet to.
+ */
 + (void)showAsSheetOnWindow:(NSWindow*)parent {
     ProfilePanel* p = [ProfilePanel shared];
     p->_parentWindow = parent;
     [parent beginSheet:p.window completionHandler:nil];
 }
 
+/**
+ * @brief   Initialize the panel window.
+ *
+ * @return  An initialized ProfilePanel.
+ */
 - (instancetype)init {
     NSWindow* win = [[NSWindow alloc]
         initWithContentRect:NSMakeRect(0, 0, 400, 300)
@@ -35,10 +70,13 @@
     return self;
 }
 
+/**
+ * @brief   Build the panel UI: frosted background, header, table, action buttons.
+ */
 - (void)buildUI {
     NSView* root = self.window.contentView;
     root.wantsLayer = YES;
-    
+
     NSVisualEffectView* bg = [[NSVisualEffectView alloc] initWithFrame:root.bounds];
     bg.material = NSVisualEffectMaterialHeaderView;
     bg.blendingMode = NSVisualEffectBlendingModeWithinWindow;
@@ -53,7 +91,7 @@
     NSScrollView* scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(20, 60, 360, 190)];
     scroll.hasVerticalScroller = YES;
     scroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    
+
     _tableView = [[NSTableView alloc] initWithFrame:scroll.bounds];
     _tableView.dataSource = self;
     _tableView.delegate = self;
@@ -86,6 +124,11 @@
     [root addSubview:done];
 }
 
+/**
+ * @brief   Prompt for a new profile name and create it.
+ *
+ * @param   _  The sender (unused).
+ */
 - (void)addProfile:(id)_ {
     NSAlert* alert = [NSAlert new];
     alert.messageText = @"New Profile";
@@ -95,7 +138,7 @@
     alert.accessoryView = input;
     [alert addButtonWithTitle:@"Create"];
     [alert addButtonWithTitle:@"Cancel"];
-    
+
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse returnCode) {
         if (returnCode == NSAlertFirstButtonReturn) {
             NSString* name = input.stringValue;
@@ -107,6 +150,11 @@
     }];
 }
 
+/**
+ * @brief   Delete the selected profile (safe: cannot delete active profile).
+ *
+ * @param   _  The sender (unused).
+ */
 - (void)deleteProfile:(id)_ {
     NSInteger row = _tableView.selectedRow;
     if (row < 0) return;
@@ -121,6 +169,11 @@
     [_tableView reloadData];
 }
 
+/**
+ * @brief   Show a context menu to choose or remove a profile picture.
+ *
+ * @param   _  The sender button.
+ */
 - (void)changePicture:(id)_ {
     NSInteger row = _tableView.selectedRow;
     if (row < 0) return;
@@ -144,6 +197,9 @@
     [NSMenu popUpContextMenu:menu withEvent:[NSApp currentEvent] forView:btn];
 }
 
+/**
+ * @brief   Open a file picker to choose a new avatar image.
+ */
 - (void)choosePictureForSelectedProfile:(id)_ {
     NSInteger row = _tableView.selectedRow;
     if (row < 0) return;
@@ -160,6 +216,9 @@
     }];
 }
 
+/**
+ * @brief   Remove the avatar image from the selected profile.
+ */
 - (void)removePictureForSelectedProfile:(id)_ {
     NSInteger row = _tableView.selectedRow;
     if (row < 0) return;
@@ -169,12 +228,23 @@
     [_tableView reloadData];
 }
 
+/**
+ * @brief   Dismiss the sheet.
+ */
 - (void)done:(id)_ {
     [_parentWindow endSheet:self.window];
     _parentWindow = nil;
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// @name NSTableViewDataSource / Delegate
+// ───────────────────────────────────────────────────────────────────────────────
+
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)_ { return [ProfileManager shared].profiles.count; }
+
+/**
+ * @brief   Build a table cell with the profile name and avatar image.
+ */
 - (NSView *)tableView:(NSTableView *)tv viewForTableColumn:(NSTableColumn *)_ row:(NSInteger)row {
     NSTableCellView* v = [tv makeViewWithIdentifier:@"cell" owner:self];
     if (!v) {
@@ -198,6 +268,13 @@
     return v;
 }
 
+/**
+ * @brief   Generate a circular avatar image (or fallback swatch) for a profile.
+ *
+ * @param   profile  The profile whose avatar to render.
+ * @param   size     The desired image size in points.
+ * @return  An NSImage with a circular cropped avatar or colored swatch.
+ */
 - (NSImage*)avatarImageForProfile:(Profile*)profile size:(CGFloat)size {
     NSImage* source = [profile avatarImage];
     if (!source) {

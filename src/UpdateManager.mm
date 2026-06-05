@@ -1,20 +1,43 @@
-#import "UpdateManager.h"
+/**
+ * @file      UpdateManager.mm
+ * @project   BuildBrowser
+ * @brief     Software update engine — fetch, download, and install.
+ *
+ * @details   Checks a JSON manifest from the configured feed URL (default:
+ *            GitHub raw manifest.json). Compares remote build number against
+ *            the current bundle. If a newer build exists, prompts the user,
+ *            downloads the .zip archive, unpacks it via /usr/bin/ditto,
+ *            and runs a shell script that waits for the current process to
+ *            exit, then replaces the app bundle and relaunches.
+ *
+ * @author    BuildBrowser Team
+ * @date      2024-2026
+ */
 
+#import "UpdateManager.h"
 #import "SettingsManager.h"
 #import <sys/stat.h>
 #import <unistd.h>
 
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Internal Helpers
+// ───────────────────────────────────────────────────────────────────────────────
+
+/// Safely coerce a value to NSString, returning @"". Handles nil/KVO.
 static NSString* BBStringOrEmpty(id value) {
     return [value isKindOfClass:[NSString class]] ? value : @"";
 }
 
+/// Shell-quote a string for use in the installer script.
 static NSString* BBShellQuote(NSString* value) {
     if (!value.length) return @"''";
     return [NSString stringWithFormat:@"'%@'", [value stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"]];
 }
 
+/// Default update feed URL (public GitHub).
 static NSString* const kDefaultUpdateFeedURL = @"https://raw.githubusercontent.com/kiro-browser/browser-core/dev/updates/manifest.json";
 
+/// Extract the first 500 bytes of data as a UTF-8 snippet for error reporting.
 static NSString* BBBodySnippet(NSData* data) {
     if (!data.length) return @"";
     NSUInteger length = MIN((NSUInteger)500, data.length);
@@ -24,6 +47,7 @@ static NSString* BBBodySnippet(NSData* data) {
     return text.length ? text : @"The response was not UTF-8 text.";
 }
 
+/// Convert a GitHub blob URL to a raw.githubusercontent.com URL.
 static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
     if (!value.length) return value;
     NSURLComponents* components = [NSURLComponents componentsWithString:value];
@@ -47,17 +71,29 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
     return [NSString stringWithFormat:@"https://raw.githubusercontent.com/%@/%@/%@/%@", owner, repo, branch, rawPath];
 }
 
+#pragma mark - Private Interface
+
 @interface UpdateManager () <NSURLSessionDownloadDelegate>
+
+/// Session for manifest fetching (data tasks).
 @property (strong) NSURLSession* session;
+/// Session for update bundle download (download tasks).
 @property (strong) NSURLSession* downloadSession;
+/// The active download task for the update bundle.
 @property (strong) NSURLSessionDownloadTask* activeUpdateTask;
+/// The manifest dict for the currently downloading update.
 @property (copy) NSDictionary* activeUpdateManifest;
+
+// Progress window UI
 @property (strong) NSWindow* progressWindow;
 @property (strong) NSTextField* progressTitleLabel;
 @property (strong) NSTextField* progressDetailLabel;
 @property (strong) NSProgressIndicator* progressIndicator;
 @property (strong) NSButton* cancelButton;
+
+/// Whether an update check is currently in progress.
 @property (assign) BOOL checking;
+
 - (void)checkForUpdatesPrompting:(BOOL)prompt;
 - (void)promptForUpdate:(NSDictionary*)manifest currentBuild:(NSInteger)currentBuild remoteBuild:(NSInteger)remoteBuild;
 - (void)downloadAndInstallUpdate:(NSDictionary*)manifest;
@@ -69,10 +105,18 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
 - (NSString*)findAppBundleInsideDirectory:(NSString*)root preferredName:(NSString*)bundleName;
 - (void)presentAlert:(NSString*)title message:(NSString*)message;
 - (NSWindow*)presentationWindow;
+
 @end
+
+#pragma mark - Implementation
 
 @implementation UpdateManager
 
+/**
+ * @brief   Returns the shared UpdateManager singleton.
+ *
+ * @return  The singleton instance.
+ */
 + (instancetype)shared {
     static UpdateManager* inst;
     static dispatch_once_t onceToken;
@@ -82,6 +126,11 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
     return inst;
 }
 
+/**
+ * @brief   Initialize with ephemeral URL sessions for manifest and download.
+ *
+ * @return  An initialized UpdateManager.
+ */
 - (instancetype)init {
     self = [super init];
     if (self) {
@@ -92,14 +141,29 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
     return self;
 }
 
+/**
+ * @brief   Check for updates and prompt the user (user-initiated).
+ */
 - (void)checkForUpdates {
     [self checkForUpdatesPrompting:YES];
 }
 
+/**
+ * @brief   Check for updates silently (auto-launch check).
+ */
 - (void)checkForUpdatesSilently {
     [self checkForUpdatesPrompting:NO];
 }
 
+/**
+ * @brief   Core update check logic.
+ *
+ * @details Fetches the manifest JSON, validates it, compares build numbers,
+ *          and either prompts (if newer) or reports no updates available
+ *          (if prompting is enabled).
+ *
+ * @param   prompt  If YES, shows alerts for success (no update) and failures.
+ */
 - (void)checkForUpdatesPrompting:(BOOL)prompt {
     if (self.checking) return;
     self.checking = YES;
@@ -114,9 +178,7 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
     }
 
     NSURLSessionDataTask* task = [self.session dataTaskWithURL:feedURL completionHandler:^(NSData* data, NSURLResponse* response, NSError* error) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            self.checking = NO;
-        });
+        dispatch_async(dispatch_get_main_queue(), ^{ self.checking = NO; });
 
         if (error || !data.length) {
             if (prompt) {
@@ -149,8 +211,7 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
                 NSString* message = [NSString stringWithFormat:@"The update manifest was not valid JSON.\n\nURL:\n%@%@%@",
                                      feedURLString, snippet.length ? @"\n\nResponse:\n" : @"", snippet];
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    [self presentAlert:@"Update Check Failed"
-                               message:message];
+                    [self presentAlert:@"Update Check Failed" message:message];
                 });
             }
             return;
@@ -176,6 +237,9 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
     [task resume];
 }
 
+/**
+ * @brief   Show an update-available alert and ask the user to download.
+ */
 - (void)promptForUpdate:(NSDictionary*)manifest currentBuild:(NSInteger)currentBuild remoteBuild:(NSInteger)remoteBuild {
     NSString* version = BBStringOrEmpty(manifest[@"version"]);
     NSString* notes = BBStringOrEmpty(manifest[@"notes"]);
@@ -198,6 +262,9 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
     }];
 }
 
+/**
+ * @brief   Start downloading the update bundle.
+ */
 - (void)downloadAndInstallUpdate:(NSDictionary*)manifest {
     if (self.activeUpdateTask) return;
 
@@ -221,6 +288,14 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
     [task resume];
 }
 
+/**
+ * @brief   Install the downloaded update: unzip, replace app bundle, relaunch.
+ *
+ * @details Uses /usr/bin/ditto to unzip the downloaded archive. Finds the
+ *          .app bundle inside, then writes a shell script that waits for
+ *          the current process (getpid) to exit, removes the old app,
+ *          copies the new one, and reopens it.
+ */
 - (void)installDownloadedUpdateAtURL:(NSURL*)location manifest:(NSDictionary*)manifest {
         [self updateProgressTitle:@"Installing Update" detail:@"Unpacking update archive..." percent:1.0 indeterminate:YES];
         NSString* tempRoot = [@"/private/tmp" stringByAppendingPathComponent:[NSString stringWithFormat:@"BuildBrowserUpdate-%@", [[NSUUID UUID] UUIDString]]];
@@ -230,6 +305,7 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
         NSString* bundleName = bundlePath.lastPathComponent;
         [[NSFileManager defaultManager] createDirectoryAtPath:unzipRoot withIntermediateDirectories:YES attributes:nil error:nil];
 
+        // Unzip using ditto
         NSTask* unzip = [NSTask new];
         unzip.launchPath = @"/usr/bin/ditto";
         unzip.arguments = @[ @"-x", @"-k", location.path, unzipRoot ];
@@ -261,6 +337,8 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
         }
 
         [self updateProgressTitle:@"Installing Update" detail:@"Preparing to replace the app and relaunch..." percent:1.0 indeterminate:YES];
+
+        // Shell script: wait for this process to die, then replace and reopen.
         NSString* waitPid = [NSString stringWithFormat:@"%d", getpid()];
         NSString* script = [NSString stringWithFormat:
             @"#!/bin/sh\n"
@@ -309,6 +387,11 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
         });
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Progress Window
+// ───────────────────────────────────────────────────────────────────────────────
+
+/** @brief   Show or update the download progress window. */
 - (void)showUpdateProgressWindowForManifest:(NSDictionary*)manifest {
     if (self.progressWindow) {
         [self.progressWindow makeKeyAndOrderFront:nil];
@@ -362,6 +445,7 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
     }
 }
 
+/** @brief   Update the progress window's status and progress bar. */
 - (void)updateProgressTitle:(NSString*)title detail:(NSString*)detail percent:(double)percent indeterminate:(BOOL)indeterminate {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!self.progressWindow) return;
@@ -377,6 +461,7 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
     });
 }
 
+/** @brief   Close and clean up the progress window. */
 - (void)closeUpdateProgressWindow {
     if (!self.progressWindow) return;
     NSWindow* window = self.progressWindow;
@@ -392,9 +477,14 @@ static NSString* BBNormalizeUpdateFeedURL(NSString* value) {
     self.cancelButton = nil;
 }
 
+/** @brief   Cancel the active download. */
 - (void)cancelUpdateDownload:(id)sender {
     [self.activeUpdateTask cancel];
 }
+
+// ───────────────────────────────────────────────────────────────────────────────
+// @name NSURLSessionDownloadDelegate
+// ───────────────────────────────────────────────────────────────────────────────
 
 - (void)URLSession:(NSURLSession*)session downloadTask:(NSURLSessionDownloadTask*)downloadTask
       didWriteData:(int64_t)bytesWritten
@@ -446,6 +536,11 @@ didFinishDownloadingToURL:(NSURL*)location {
     });
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Helpers
+// ───────────────────────────────────────────────────────────────────────────────
+
+/** @brief   Search a directory for the first .app bundle. */
 - (NSString*)findAppBundleInsideDirectory:(NSString*)root preferredName:(NSString*)bundleName {
     NSFileManager* fm = [NSFileManager defaultManager];
     NSArray<NSString*>* entries = [fm contentsOfDirectoryAtPath:root error:nil];
@@ -461,6 +556,7 @@ didFinishDownloadingToURL:(NSURL*)location {
     return nil;
 }
 
+/** @brief   Show a modal alert sheet on the key window. */
 - (void)presentAlert:(NSString*)title message:(NSString*)message {
     NSAlert* alert = [NSAlert new];
     alert.messageText = title ?: @"Update";
@@ -469,6 +565,7 @@ didFinishDownloadingToURL:(NSURL*)location {
     [alert beginSheetModalForWindow:[self presentationWindow] completionHandler:nil];
 }
 
+/** @brief   Return the best available window for sheet presentation. */
 - (NSWindow*)presentationWindow {
     return NSApp.keyWindow ?: NSApp.mainWindow ?: NSApp.windows.firstObject;
 }

@@ -1,3 +1,20 @@
+/**
+ * @file      BrowserWindowController.mm
+ * @project   BuildBrowser
+ * @brief     Main browser window — chrome, toolbar, tabs, and panels.
+ *
+ * @details   The primary NSWindowController subclass. Builds the complete
+ *            window chrome: frosted toolbar with navigation buttons and URL
+ *            bar, tab strip with favicons and close buttons, bookmarks bar,
+ *            find-in-page bar, progress bar, and content area. Owns a
+ *            TabManager and wires its callbacks to update the UI. Handles
+ *            all user-facing actions: navigation, bookmarks, profiles,
+ *            security info, find-in-page, and window state save/restore.
+ *
+ * @author    BuildBrowser Team
+ * @date      2024-2026
+ */
+
 #import "BrowserWindowController.h"
 #import "BookmarkManager.h"
 #import "HistoryManager.h"
@@ -8,7 +25,11 @@
 #import <objc/runtime.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
-// Forward-declare panels (defined in their own .mm files, compiled together)
+// Forward declarations for sibling panels compiled in the same target.
+@class SettingsPanel, SidePanel, DownloadsPanel;
+
+#pragma mark - Forward-Declared Panel Interfaces
+
 @interface SettingsPanel : NSWindowController
 + (void)showAsSheetOnWindow:(NSWindow*)parent;
 @end
@@ -25,36 +46,57 @@
 - (void)show;
 @end
 
-// ── Layout constants ──────────────────────────────────────────────────────────
+#pragma mark - Layout Constants
+
+/// Toolbar height in points.
 static const CGFloat kToolbarH      = 44.0;
+/// Tab bar height in points.
 static const CGFloat kTabBarH       = 32.0;
+/// Bookmarks bar height in points.
 static const CGFloat kBookmarksBarH = 28.0;
+/// Default tab width in points.
 static const CGFloat kTabW          = 180.0;
+/// Minimum tab width in points.
 static const CGFloat kTabMinW       = 80.0;
+/// Progress bar height in points.
 static const CGFloat kProgressH     = 3.0;
+/// Toolbar button size (square).
 static const CGFloat kBtnSize       = 28.0;
+/// Find bar height in points.
 static const CGFloat kFindBarH      = 36.0;
 
-// ── Thin progress bar ─────────────────────────────────────────────────────────
+#pragma mark - ProgressBarView
+
+/**
+ * @class     ProgressBarView
+ * @brief     Custom NSView that draws a thin accent-colored progress bar.
+ *
+ * @details   Draws a gradient from controlAccentColor to a lighter variant.
+ *          Only renders when visible and progress > 0.
+ */
 @interface ProgressBarView : NSView
+/// Progress value (0.0 to 1.0).
 @property (nonatomic, assign) double progress;
+/// Whether the progress bar should be drawn.
 @property (nonatomic, assign) BOOL   visible;
 @end
 @implementation ProgressBarView
 - (void)setProgress:(double)p { _progress = p; [self setNeedsDisplay:YES]; }
 - (void)drawRect:(NSRect)_ {
     if (!_visible || _progress <= 0.0) return;
-    // Subtle gradient fill
     NSGradient* grad = [[NSGradient alloc] initWithStartingColor:[NSColor controlAccentColor]
                                                      endingColor:[[NSColor controlAccentColor] colorWithAlphaComponent:0.7]];
     [grad drawInRect:NSMakeRect(0, 0, NSWidth(self.bounds) * _progress, NSHeight(self.bounds)) angle:0];
 }
 @end
 
-// ── BrowserWindowController private interface ─────────────────────────────────
+#pragma mark - Private Interface
+
 @interface BrowserWindowController () <NSWindowDelegate, NSTextFieldDelegate>
+
 // Managers
 @property (strong) TabManager*      tabManager;
+
 // Chrome views
 @property (strong) NSView*          toolbarView;
 @property (strong) NSView*          tabBarView;
@@ -62,33 +104,68 @@ static const CGFloat kFindBarH      = 36.0;
 @property (strong) NSView*          findBarView;
 @property (strong) ProgressBarView* progressBar;
 @property (strong) NSView*          contentArea;
+
 // Toolbar widgets
 @property (strong) NSButton*        backBtn;
 @property (strong) NSButton*        fwdBtn;
 @property (strong) NSButton*        reloadBtn;
-@property (strong) NSButton*        homeBtn;      // New
+@property (strong) NSButton*        homeBtn;
 @property (strong) NSButton*        securityIndicatorBtn;
 @property (strong) NSTextField*     urlField;
-@property (strong) NSButton*        readerModeBtn; // New
+@property (strong) NSButton*        readerModeBtn;
 @property (strong) NSButton*        bookmarkStarBtn;
 @property (strong) NSButton*        profileBtn;
 @property (strong) NSArray<NSButton*>* toolbarRightButtons;
+
 // Find bar widgets
 @property (strong) NSTextField*     findField;
 @property (strong) NSTextField*     findStatusLabel;
 @property (assign) BOOL             findBarVisible;
 @end
 
+#pragma mark - Implementation
+
 @implementation BrowserWindowController
 
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Initialization
+// ───────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @brief   Initialize with a profile (new window, no session).
+ *
+ * @param   profile  The profile to associate with this window.
+ * @return  A BrowserWindowController showing the default homepage.
+ */
 - (instancetype)initWithProfile:(Profile*)profile {
     return [self initWithProfile:profile restoredURLs:nil activeIndex:0];
 }
 
+/**
+ * @brief   Initialize with a profile and restored URLs (no pinned state).
+ *
+ * @param   profile      The profile to associate.
+ * @param   urls         Array of URL strings to restore.
+ * @param   activeIndex  The index of the active tab.
+ * @return  A BrowserWindowController restoring the given tabs.
+ */
 - (instancetype)initWithProfile:(Profile*)profile restoredURLs:(NSArray<NSString*>*)urls activeIndex:(NSInteger)activeIndex {
     return [self initWithProfile:profile restoredURLs:urls pinned:nil activeIndex:activeIndex];
 }
 
+/**
+ * @brief   Designated initializer — creates the window, builds chrome, restores tabs.
+ *
+ * @details Creates a full-size-content-view window with transparent titlebar.
+ *          Builds the UI chrome, wires TabManager callbacks, and restores
+ *          tabs from the provided session (or opens the homepage).
+ *
+ * @param   profile      The profile to associate.
+ * @param   urls         Array of URL strings to restore (or nil for default).
+ * @param   pinned       Array of NSNumber BOOLs for pinned state.
+ * @param   activeIndex  The tab index to activate.
+ * @return  A fully initialized BrowserWindowController.
+ */
 - (instancetype)initWithProfile:(Profile*)profile restoredURLs:(NSArray<NSString*>*)urls pinned:(NSArray<NSNumber*>*)pinned activeIndex:(NSInteger)activeIndex {
     NSRect frame = NSMakeRect(0, 0, 1280, 800);
     NSWindowStyleMask style = NSWindowStyleMaskTitled
@@ -137,6 +214,16 @@ static const CGFloat kFindBarH      = 36.0;
     return [self initWithProfile:[ProfileManager shared].activeProfile];
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Session State (Save / Restore)
+// ───────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @brief   Capture the current window and tab state for session restore.
+ *
+ * @return  A dictionary with urls, pinned, activeIndex, profileUUID,
+ *          windowFrame, windowZoomed, and windowFullscreen.
+ */
 - (NSDictionary*)sessionState {
     NSMutableArray<NSString*>* urls = [NSMutableArray new];
     for (BrowserTab* tab in _tabManager.tabs) {
@@ -156,6 +243,11 @@ static const CGFloat kFindBarH      = 36.0;
     };
 }
 
+/**
+ * @brief   Restore the window frame, zoom, and fullscreen state from a session.
+ *
+ * @param   state  The session dictionary captured earlier.
+ */
 - (void)restoreWindowState:(NSDictionary*)state {
     if (![state isKindOfClass:[NSDictionary class]]) return;
 
@@ -179,6 +271,12 @@ static const CGFloat kFindBarH      = 36.0;
     }
 }
 
+/**
+ * @brief   Validate that a frame is at least partially visible on any screen.
+ *
+ * @param   frame  The proposed window frame.
+ * @return  YES if at least 160x120 of the frame intersects a visible screen.
+ */
 - (BOOL)frameIsVisibleOnAnyScreen:(NSRect)frame {
     if (NSWidth(frame) < self.window.minSize.width || NSHeight(frame) < self.window.minSize.height)
         return NO;
@@ -191,15 +289,21 @@ static const CGFloat kFindBarH      = 36.0;
     return NO;
 }
 
-// ── UI construction ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name UI Construction
+// ───────────────────────────────────────────────────────────────────────────────
 
+/**
+ * @brief   Build all chrome: toolbar, progress bar, tab bar, bookmarks bar,
+ *          find bar, and content area.
+ */
 - (void)buildUI {
     NSView* root = self.window.contentView;
     root.wantsLayer = YES;
     CGFloat W = root.bounds.size.width;
     CGFloat H = root.bounds.size.height;
 
-    // ── Toolbar (frosted glass, full-width) ───────────────────────────────────
+    // ── Toolbar ──
     _toolbarView = [[NSView alloc] initWithFrame:NSMakeRect(0, H - kToolbarH, W, kToolbarH)];
     _toolbarView.wantsLayer = YES;
     _toolbarView.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
@@ -212,8 +316,8 @@ static const CGFloat kFindBarH      = 36.0;
     bg.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     [_toolbarView addSubview:bg];
 
-    // Nav cluster — back / forward / reload grouped tightly
-    CGFloat cx = 76;  // leave room for traffic lights
+    // Nav cluster: back, forward, reload, home
+    CGFloat cx = 76;
     _backBtn   = [self makeSymbolButton:@"chevron.left"    size:16 tooltip:@"Back (⌘[)"];
     _fwdBtn    = [self makeSymbolButton:@"chevron.right"   size:16 tooltip:@"Forward (⌘])"];
     _reloadBtn = [self makeSymbolButton:@"arrow.clockwise" size:15 tooltip:@"Reload (⌘R)"];
@@ -231,7 +335,7 @@ static const CGFloat kFindBarH      = 36.0;
     [_toolbarView addSubview:_reloadBtn];
     [_toolbarView addSubview:_homeBtn];
 
-    // Right-side icon buttons: profile | bookmark | bookmarks | history | downloads | settings | new-tab
+    // Right toolbar buttons: profile, bookmark, bookmarks, history, downloads, settings, new tab
     NSArray* syms  = @[@"person.circle", @"bookmark",       @"books.vertical", @"clock",   @"arrow.down.circle", @"gearshape", @"plus"];
     NSArray* tips  = @[@"Profile",         @"Bookmark (⌘D)",  @"Bookmarks (⌘B)", @"History (⌘Y)", @"Downloads (⌘J)", @"Settings (⌘,)", @"New Tab (⌘T)"];
     SEL acts[] = { @selector(showProfileMenu:), @selector(toggleBookmark:), @selector(showBookmarks:), @selector(showHistory:),
@@ -251,8 +355,8 @@ static const CGFloat kFindBarH      = 36.0;
     _toolbarRightButtons = rightButtons.copy;
     [self updateProfileButtonIcon];
 
-    // URL field — fills the gap between nav cluster and right buttons
-    CGFloat urlX = cx + 128; // adjusted for Home button
+    // URL field
+    CGFloat urlX = cx + 128;
     CGFloat urlW = rBase - urlX - 8;
     _securityIndicatorBtn = [self makeSymbolButton:@"globe" size:13 tooltip:@"Page security"];
     _securityIndicatorBtn.frame = NSMakeRect(urlX, (kToolbarH-24)/2, 24, 24);
@@ -270,7 +374,7 @@ static const CGFloat kFindBarH      = 36.0;
     _urlField.target = self; _urlField.action = @selector(urlFieldActivated:);
     [_toolbarView addSubview:_urlField];
 
-    // Reader Mode button inside URL field (overlapping right edge)
+    // Reader mode button (inside URL field)
     _readerModeBtn = [self makeSymbolButton:@"doc.plaintext" size:13 tooltip:@"Reader Mode"];
     _readerModeBtn.frame = NSMakeRect(urlX + urlW - 28, (kToolbarH-24)/2, 24, 24);
     _readerModeBtn.autoresizingMask = NSViewMinXMargin;
@@ -278,21 +382,21 @@ static const CGFloat kFindBarH      = 36.0;
     _readerModeBtn.hidden = YES;
     [_toolbarView addSubview:_readerModeBtn];
 
-    // Bottom edge of toolbar — 1px separator
+    // Toolbar separator (1px)
     NSView* toolSep = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, W, 1)];
     toolSep.wantsLayer = YES;
     toolSep.layer.backgroundColor = [NSColor separatorColor].CGColor;
     toolSep.autoresizingMask = NSViewWidthSizable;
     [_toolbarView addSubview:toolSep];
 
-    // ── Progress bar (2px, accent color) ─────────────────────────────────────
+    // ── Progress bar ──
     _progressBar = [[ProgressBarView alloc] initWithFrame:
                     NSMakeRect(0, H-kToolbarH-kProgressH, W, kProgressH)];
     _progressBar.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
     _progressBar.visible = NO;
     [root addSubview:_progressBar];
 
-    // ── Tab bar ───────────────────────────────────────────────────────────────
+    // ── Tab bar ──
     CGFloat tabBarY = H - kToolbarH - kProgressH - kTabBarH;
     _tabBarView = [[NSView alloc] initWithFrame:NSMakeRect(0, tabBarY, W, kTabBarH)];
     _tabBarView.wantsLayer = YES;
@@ -312,7 +416,7 @@ static const CGFloat kFindBarH      = 36.0;
     [_tabBarView addSubview:tabSep];
     [root addSubview:_tabBarView];
 
-    // ── Bookmarks bar ─────────────────────────────────────────────────────────
+    // ── Bookmarks bar ──
     CGFloat bmBarY = tabBarY - kBookmarksBarH;
     _bookmarksBarView = [[NSView alloc] initWithFrame:NSMakeRect(0, bmBarY, W, kBookmarksBarH)];
     _bookmarksBarView.wantsLayer = YES;
@@ -334,7 +438,7 @@ static const CGFloat kFindBarH      = 36.0;
     _bookmarksBarView.hidden = ![SettingsManager profileShared].showBookmarksBar;
     [self rebuildBookmarksBar];
 
-    // ── Find bar (frosted, slides up from bottom) ─────────────────────────────
+    // ── Find bar ──
     _findBarView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, W, kFindBarH)];
     _findBarView.wantsLayer = YES;
     _findBarView.autoresizingMask = NSViewWidthSizable;
@@ -383,14 +487,16 @@ static const CGFloat kFindBarH      = 36.0;
     [_findBarView addSubview:closeFind];
     [root addSubview:_findBarView];
 
-    // ── Content area ──────────────────────────────────────────────────────────
+    // ── Content area ──
     [self layoutChrome];
 }
 
+/// Whether the bookmarks bar is currently visible.
 - (BOOL)bookmarksBarVisible {
     return [SettingsManager profileShared].showBookmarksBar && !_bookmarksBarView.hidden;
 }
 
+/// Reposition toolbar controls on window resize.
 - (void)layoutToolbarControls {
     CGFloat W = _toolbarView.bounds.size.width;
     CGFloat cx = 76;
@@ -413,7 +519,9 @@ static const CGFloat kFindBarH      = 36.0;
     _readerModeBtn.frame = NSMakeRect(NSMaxX(_urlField.frame) - 28, (kToolbarH-24)/2, 24, 24);
 }
 
-// Recalculate and resize the chrome and content area based on visible bars.
+/**
+ * @brief   Recalculate and resize all chrome views and the content area.
+ */
 - (void)layoutChrome {
     NSView* root = self.window.contentView;
     CGFloat W = root.bounds.size.width;
@@ -443,11 +551,9 @@ static const CGFloat kFindBarH      = 36.0;
         _contentArea.frame = NSMakeRect(0, bottom, W, contentH);
     }
 
-    // Reposition find bar
     _findBarView.frame = NSMakeRect(0, 0, W, kFindBarH);
     [self layoutToolbarControls];
 
-    // Resize all web views
     for (BrowserTab* t in _tabManager.tabs) {
         t.webView.frame = _contentArea.bounds;
     }
@@ -457,8 +563,11 @@ static const CGFloat kFindBarH      = 36.0;
     [self layoutChrome];
 }
 
-// ── Tab manager callbacks ─────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Tab Manager Callbacks
+// ───────────────────────────────────────────────────────────────────────────────
 
+/// Wire TabManager callback blocks to local event handler methods.
 - (void)wireTabManagerCallbacks {
     __unsafe_unretained typeof(self) ws = self;
     _tabManager.onTabAdded        = ^(BrowserTab* t, NSInteger i) { [ws onTabAdded:t atIndex:i]; };
@@ -472,6 +581,7 @@ static const CGFloat kFindBarH      = 36.0;
     _tabManager.onInternalCommand = ^(NSString* c)                  { [ws handleInternalCommand:c]; };
 }
 
+/// Wire the SidePanel openURL callback to open tabs in this window.
 - (void)wireSidePanel {
     __unsafe_unretained typeof(self) ws = self;
     [SidePanel shared].openURLCallback = ^(NSString* url) {
@@ -480,7 +590,9 @@ static const CGFloat kFindBarH      = 36.0;
     };
 }
 
-// ── Tab event handlers ────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Tab Event Handlers
+// ───────────────────────────────────────────────────────────────────────────────
 
 - (void)onTabAdded:(BrowserTab*)tab atIndex:(NSInteger)index {
     tab.webView.frame            = _contentArea.bounds;
@@ -519,8 +631,7 @@ static const CGFloat kFindBarH      = 36.0;
 - (void)onTitleChanged:(NSString*)title forTab:(BrowserTab*)tab {
     if (tab == _tabManager.activeTab)
         [self.window setTitle:title.length ? title : @"BuildBrowser"];
-    [self rebuildTabStrip];  // refresh label + weight
-    // Record in history (skip private mode)
+    [self rebuildTabStrip];
     if (![SettingsManager profileShared].privateBrowsing && tab.url.length)
         [[HistoryManager profileShared] recordVisitWithTitle:title url:tab.url];
 }
@@ -553,6 +664,11 @@ static const CGFloat kFindBarH      = 36.0;
     [self rebuildTabStrip];
 }
 
+/**
+ * @brief   Handle internal buildbrowser:// commands from the TabManager.
+ *
+ * @param   command  The command string (e.g. @"bookmarks", @"history").
+ */
 - (void)handleInternalCommand:(NSString*)command {
     if ([command isEqualToString:@"bookmarks"]) {
         [self showBookmarks:nil];
@@ -567,13 +683,21 @@ static const CGFloat kFindBarH      = 36.0;
     }
 }
 
-// ── Navigation actions ────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Navigation Actions
+// ───────────────────────────────────────────────────────────────────────────────
 
+/** @brief   Open a new tab with the homepage. */
 - (void)newTab:(id)_ {
     [_tabManager newTabWithURL:[SettingsManager profileShared].homepage];
     [self rebuildTabStrip];
 }
 
+/**
+ * @brief   Open a URL in a new tab (used by side panel and URL open requests).
+ *
+ * @param   url  The URL string to open.
+ */
 - (void)openURLInNewTab:(NSString*)url {
     if (!url.length) return;
     [_tabManager newTabWithURL:url];
@@ -590,6 +714,7 @@ static const CGFloat kFindBarH      = 36.0;
     if (wv.isLoading) [wv stopLoading]; else [wv reload];
 }
 
+/** @brief   Load the URL from the address bar. */
 - (void)urlFieldActivated:(id)_ {
     BrowserTab* tab = _tabManager.activeTab;
     if (!tab) return;
@@ -597,16 +722,20 @@ static const CGFloat kFindBarH      = 36.0;
     [self.window makeFirstResponder:tab.webView];
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Reader Mode
+// ───────────────────────────────────────────────────────────────────────────────
+
+/// Toggle a simplistic reader mode overlay via JS.
 - (void)toggleReaderMode:(id)_ {
-    // Basic toggle: we'll use a script to find content and display it cleanly
-    // For a real generic 'Reader Mode', WebKit provides _WKWebViewPrintFormatter or just CSS overrides
-    // Here we'll just toggle a simplistic fullscreen overlay for now.
     WKWebView* wv = _tabManager.activeTab.webView;
     [wv evaluateJavaScript:@"(function(){ if(window._readerOn){ location.reload(); } else { document.body.innerHTML = '<div style=\"max-width:800px;margin:50px auto;font-family:serif;font-size:20px;line-height:1.6;color:#333;background:#fff;padding:40px;\">' + (document.querySelector('article') || document.body).innerHTML + '</div>'; window._readerOn=true; document.body.style.background='#fff'; } })()" completionHandler:nil];
 }
 
+/**
+ * @brief   Check if the page has article content and show/hide the reader button.
+ */
 - (void)updateReaderModeAvailability:(BrowserTab*)tab {
-    // Show reader button if we find an <article> tag or enough text
     [tab.webView evaluateJavaScript:@"(!!document.querySelector('article') || document.body.innerText.length > 2000)" completionHandler:^(id res, NSError* _) {
         if (tab == self.tabManager.activeTab) {
             self.readerModeBtn.hidden = ![res boolValue];
@@ -614,6 +743,11 @@ static const CGFloat kFindBarH      = 36.0;
     }];
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Tab UI
+// ───────────────────────────────────────────────────────────────────────────────
+
+/// Handle tab button click (Option+click closes, normal click switches).
 - (void)tabButtonClicked:(NSButton*)btn {
     NSEvent* ev = NSApp.currentEvent;
     if (ev.modifierFlags & NSEventModifierFlagOption)
@@ -622,10 +756,12 @@ static const CGFloat kFindBarH      = 36.0;
         [_tabManager switchToIndex:btn.tag];
 }
 
+/// Handle close button on a tab.
 - (void)closeTabButtonClicked:(NSButton*)btn {
     [_tabManager closeTabAtIndex:btn.tag];
 }
 
+/// Toggle pinned state for the active tab.
 - (void)togglePinCurrentTab:(id)_ {
     NSInteger index = _tabManager.activeIndex;
     BrowserTab* tab = _tabManager.activeTab;
@@ -634,8 +770,11 @@ static const CGFloat kFindBarH      = 36.0;
     [self rebuildTabStrip];
 }
 
-// ── Bookmark actions ──────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Bookmark Actions
+// ───────────────────────────────────────────────────────────────────────────────
 
+/// Toggle bookmark for the active tab's URL.
 - (void)toggleBookmark:(id)_ {
     BrowserTab* tab = _tabManager.activeTab;
     if (!tab || !tab.url.length) return;
@@ -651,6 +790,7 @@ static const CGFloat kFindBarH      = 36.0;
     [self rebuildBookmarksBar];
 }
 
+/// Update the bookmark star icon (filled if bookmarked, outline otherwise).
 - (void)updateBookmarkStar {
     BrowserTab* tab = _tabManager.activeTab;
     BOOL starred = tab && [[BookmarkManager profileShared] isBookmarked:tab.url];
@@ -658,6 +798,9 @@ static const CGFloat kFindBarH      = 36.0;
     [_bookmarkStarBtn setImage:[NSImage imageWithSystemSymbolName:sym accessibilityDescription:nil]];
 }
 
+/**
+ * @brief   Update the security indicator icon and color based on the URL scheme.
+ */
 - (void)updateSecurityIndicatorForURL:(NSString*)urlString {
     NSURL* url = [NSURL URLWithString:urlString ?: @""];
     NSString* scheme = url.scheme.lowercaseString ?: @"";
@@ -696,6 +839,9 @@ static const CGFloat kFindBarH      = 36.0;
     _securityIndicatorBtn.toolTip = tip;
 }
 
+/**
+ * @brief   Show a security info alert with certificate details for HTTPS pages.
+ */
 - (void)showSecurityInfo:(id)sender {
     BrowserTab* tab = _tabManager.activeTab;
     NSString* urlString = tab.url ?: @"";
@@ -740,10 +886,18 @@ static const CGFloat kFindBarH      = 36.0;
     [alert beginSheetModalForWindow:self.window completionHandler:nil];
 }
 
-// ── Bookmarks bar ─────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Bookmarks Bar
+// ───────────────────────────────────────────────────────────────────────────────
 
+/**
+ * @brief   Rebuild the bookmarks bar buttons from the BookmarkManager data.
+ *
+ * @details Removes old bookmark buttons, groups bookmarks by folder.
+ *          Shows "Favorites" items as inline buttons, other folders as
+ *          pop-up menu buttons.
+ */
 - (void)rebuildBookmarksBar {
-    // Remove old bookmark buttons (keep the separator box)
     for (NSView* v in _bookmarksBarView.subviews.copy)
         if ([v isKindOfClass:[NSButton class]]) [v removeFromSuperview];
 
@@ -796,6 +950,7 @@ static const CGFloat kFindBarH      = 36.0;
     }
 }
 
+/// Create a single bookmark bar button.
 - (NSButton*)bookmarkBarButtonWithTitle:(NSString*)title url:(NSString*)url x:(CGFloat)x {
     NSButton* btn = [NSButton buttonWithTitle:title.length ? title : url target:self
                                        action:@selector(bookmarkBarItemClicked:)];
@@ -809,31 +964,37 @@ static const CGFloat kFindBarH      = 36.0;
     return btn;
 }
 
+/// Click a bookmark bar item — opens the URL in a new tab.
 - (void)bookmarkBarItemClicked:(NSButton*)btn {
     NSString* url = objc_getAssociatedObject(btn, "bmurl");
     if (url) [_tabManager newTabWithURL:url];
     [self rebuildTabStrip];
 }
 
+/// Click a folder button — pop up its menu.
 - (void)bookmarkFolderButtonClicked:(NSButton*)btn {
     NSMenu* menu = objc_getAssociatedObject(btn, "folderMenu");
     if (!menu) return;
     [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, NSHeight(btn.bounds) + 2) inView:btn];
 }
 
+/// Select a bookmark from a folder menu.
 - (void)bookmarkFolderMenuItemClicked:(NSMenuItem*)item {
     NSString* url = [item.representedObject isKindOfClass:[NSString class]] ? item.representedObject : nil;
     if (url) [_tabManager newTabWithURL:url];
     [self rebuildTabStrip];
 }
 
-// ── Panel actions ─────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Panel Actions
+// ───────────────────────────────────────────────────────────────────────────────
 
 - (void)showBookmarks:(id)_  { [[SidePanel shared] showBookmarks]; }
 - (void)showHistory:(id)_    { [[SidePanel shared] showHistory]; }
 - (void)showDownloads:(id)_  { [[DownloadsPanel shared] show]; }
 - (void)showSettings:(id)_   { [SettingsPanel showAsSheetOnWindow:self.window]; }
 
+/// Respond to settings changes (e.g., bookmarks bar toggle).
 - (void)settingsDidChange:(NSNotification*)_ {
     _bookmarksBarView.hidden = ![SettingsManager profileShared].showBookmarksBar;
     [self layoutChrome];
@@ -841,6 +1002,11 @@ static const CGFloat kFindBarH      = 36.0;
     [self rebuildTabStrip];
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Profile Menu
+// ───────────────────────────────────────────────────────────────────────────────
+
+/// Show the profile pop-up menu from the profile button.
 - (void)showProfileMenu:(id)sender {
     NSMenu* menu = [NSMenu new];
     NSMenuItem* header = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"Active Profile: %@", _profile.name ?: @"Profile"]
@@ -899,11 +1065,12 @@ static const CGFloat kFindBarH      = 36.0;
 
     NSMenuItem* manage = [menu addItemWithTitle:@"Manage Profiles…" action:@selector(manageProfiles:) keyEquivalent:@""];
     manage.target = self;
-    
+
     NSButton* btn = (NSButton*)sender;
     [NSMenu popUpContextMenu:menu withEvent:[NSApp currentEvent] forView:btn];
 }
 
+/// Open Google Account sign-in page with privacy warning if needed.
 - (void)openGoogleAccountFromMenu:(id)_ {
     if ([SettingsManager profileShared].privateBrowsing) {
         NSAlert* alert = [NSAlert new];
@@ -921,19 +1088,19 @@ static const CGFloat kFindBarH      = 36.0;
     [_tabManager loadURL:@"https://accounts.google.com/" inTab:_tabManager.activeTab];
 }
 
+/// Switch to a different profile, opening a new window.
 - (void)switchProfileFromMenu:(NSMenuItem*)item {
     Profile* p = (Profile*)item.representedObject;
     if (p == _profile) return;
-    
-    // Switch profile: Open new window with selected profile
+
     [ProfileManager shared].activeProfile = p;
     [[ProfileManager shared] saveProfiles];
-    
+
     BrowserWindowController* wc = [[BrowserWindowController alloc] initWithProfile:p];
     [wc showWindow:nil];
-    // Keep reference in AppDelegate (or just don't close this one)
 }
 
+/// Prompt for a new profile name and create it.
 - (void)createProfileFromMenu:(id)_ {
     NSAlert* alert = [NSAlert new];
     alert.messageText = @"New Profile";
@@ -955,6 +1122,7 @@ static const CGFloat kFindBarH      = 36.0;
     }];
 }
 
+/// Set the profile accent color from the menu.
 - (void)setProfileColorFromMenu:(NSMenuItem*)item {
     NSColor* color = [item.representedObject isKindOfClass:[NSColor class]] ? item.representedObject : [NSColor controlAccentColor];
     _profile.color = color;
@@ -962,6 +1130,7 @@ static const CGFloat kFindBarH      = 36.0;
     [self updateProfileButtonIcon];
 }
 
+/// Open a file picker to choose a profile picture.
 - (void)chooseProfilePictureFromMenu:(id)_ {
     NSOpenPanel* panel = [NSOpenPanel openPanel];
     panel.allowedContentTypes = @[ UTTypeImage ];
@@ -975,12 +1144,18 @@ static const CGFloat kFindBarH      = 36.0;
     }];
 }
 
+/// Remove the current profile picture.
 - (void)removeProfilePictureFromMenu:(id)_ {
     [_profile clearAvatar];
     [[ProfileManager shared] saveProfiles];
     [self updateProfileButtonIcon];
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Profile UI Helpers
+// ───────────────────────────────────────────────────────────────────────────────
+
+/// Update the profile button image to show the current profile's avatar or swatch.
 - (void)updateProfileButtonIcon {
     NSImage* img = [self profileAvatarImage:_profile size:22];
     if (img) {
@@ -996,12 +1171,14 @@ static const CGFloat kFindBarH      = 36.0;
     }
 }
 
+/// Generate a circular avatar image (or fallback swatch) for a profile.
 - (NSImage*)profileAvatarImage:(Profile*)profile size:(CGFloat)size {
     NSImage* source = [profile avatarImage];
     if (source) return [self circularImageFromImage:source size:size borderColor:profile.color ?: [NSColor controlAccentColor]];
     return [self profileSwatchImage:profile.color ?: [NSColor controlAccentColor] size:size];
 }
 
+/// Generate a circular colored swatch for a profile with no avatar.
 - (NSImage*)profileSwatchImage:(NSColor*)color size:(CGFloat)size {
     NSImage* image = [[NSImage alloc] initWithSize:NSMakeSize(size, size)];
     [image lockFocus];
@@ -1015,6 +1192,7 @@ static const CGFloat kFindBarH      = 36.0;
     return image;
 }
 
+/// Crop a source image to a circle with a border.
 - (NSImage*)circularImageFromImage:(NSImage*)source size:(CGFloat)size borderColor:(NSColor*)borderColor {
     NSImage* image = [[NSImage alloc] initWithSize:NSMakeSize(size, size)];
     [image lockFocus];
@@ -1029,12 +1207,16 @@ static const CGFloat kFindBarH      = 36.0;
     return image;
 }
 
+/// Open the profile management panel.
 - (void)manageProfiles:(id)_ {
     [ProfilePanel showAsSheetOnWindow:self.window];
 }
 
-// ── Find in page ──────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Find in Page
+// ───────────────────────────────────────────────────────────────────────────────
 
+/** @brief   Show the find bar. */
 - (void)openFindBar:(id)_ {
     _findBarVisible = YES;
     _findBarView.hidden = NO;
@@ -1042,24 +1224,30 @@ static const CGFloat kFindBarH      = 36.0;
     [self.window makeFirstResponder:_findField];
 }
 
+/** @brief   Hide the find bar and clear selection. */
 - (void)closeFindBar:(id)_ {
     _findBarVisible = NO;
     _findBarView.hidden = YES;
     [self recalcContentArea];
-    // Clear highlights
     [_tabManager.activeTab.webView evaluateJavaScript:
         @"window.getSelection().removeAllRanges();" completionHandler:nil];
     _findStatusLabel.stringValue = @"";
 }
 
+/** @brief   Find next occurrence. */
 - (void)findNext:(id)_ { [self findInPage:YES]; }
+/** @brief   Find previous occurrence. */
 - (void)findPrev:(id)_ { [self findInPage:NO]; }
 
+/**
+ * @brief   Perform a find-in-page search using window.find().
+ *
+ * @param   forward  YES for forward search, NO for backward.
+ */
 - (void)findInPage:(BOOL)forward {
     NSString* query = _findField.stringValue;
     if (!query.length) { _findStatusLabel.stringValue = @""; return; }
 
-    // Use window.find() — simple, no extra JS libraries needed
     NSString* js = [NSString stringWithFormat:
         @"window.find(%@, false, %@, true, false, false, false)",
         [self jsString:query], forward ? @"false" : @"true"];
@@ -1073,22 +1261,29 @@ static const CGFloat kFindBarH      = 36.0;
     }];
 }
 
+/// Escape a string for use in a JS string literal.
 - (NSString*)jsString:(NSString*)s {
     NSString* escaped = [s stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"];
     escaped = [escaped stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
     return [NSString stringWithFormat:@"\"%@\"", escaped];
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name General Helpers
+// ───────────────────────────────────────────────────────────────────────────────
 
+/// Enable/disable the back and forward navigation buttons.
 - (void)updateNavButtons {
     WKWebView* wv = _tabManager.activeTab.webView;
     _backBtn.enabled = wv.canGoBack;
     _fwdBtn.enabled  = wv.canGoForward;
 }
 
+/**
+ * @brief   Rebuild the tab strip: remove old buttons, create new ones with
+ *          favicons, titles, close buttons, and click targets.
+ */
 - (void)rebuildTabStrip {
-    // Remove all tab buttons (leave the separator and visual effect bg)
     for (NSView* v in _tabBarView.subviews.copy)
         if ([v isKindOfClass:[NSButton class]] || [v.identifier isEqualToString:@"tabItem"])
             [v removeFromSuperview];
@@ -1109,7 +1304,6 @@ static const CGFloat kFindBarH      = 36.0;
         CGFloat tabW = tab.pinned ? pinnedW : regularTabW;
         BOOL showClose = !tab.pinned && (tabW > 100);
 
-        // Container view for the tab
         NSView* item = [[NSView alloc] initWithFrame:
                         NSMakeRect(x, 2, tabW, kTabBarH-4)];
         item.wantsLayer = YES;
@@ -1121,7 +1315,7 @@ static const CGFloat kFindBarH      = 36.0;
             item.layer.borderColor     = [NSColor colorWithWhite:1.0 alpha:0.12].CGColor;
             item.layer.borderWidth     = 0.5;
         }
-        
+
         // Favicon
         NSImageView* iv = [[NSImageView alloc] initWithFrame:NSMakeRect(8, (kTabBarH-4-16)/2, 16, 16)];
         iv.image = tab.favicon;
@@ -1140,14 +1334,14 @@ static const CGFloat kFindBarH      = 36.0;
         lbl.lineBreakMode = NSLineBreakByTruncatingTail;
         [item addSubview:lbl];
 
-        // Close button (×)
+        // Close button
         if (showClose) {
             NSButton* closeBtn = [self makeSymbolButton:@"xmark" size:9 tooltip:@"Close Tab"];
             closeBtn.frame  = NSMakeRect(tabW - 26, (kTabBarH-4-18)/2, 18, 18);
             closeBtn.tag    = i;
             closeBtn.target = self;
             closeBtn.action = @selector(closeTabButtonClicked:);
-            closeBtn.alphaValue = active ? 0.7 : 0.0;  // only show on active; hover handled below
+            closeBtn.alphaValue = active ? 0.7 : 0.0;
             [item addSubview:closeBtn];
         }
 
@@ -1158,7 +1352,7 @@ static const CGFloat kFindBarH      = 36.0;
             [item addSubview:pin];
         }
 
-        // Invisible click target over the whole tab
+        // Invisible click target
         NSButton* hitArea = [[NSButton alloc] initWithFrame:
                              NSMakeRect(0, 0, showClose ? tabW - 24 : tabW, kTabBarH-4)];
         hitArea.bordered    = NO;
@@ -1168,14 +1362,13 @@ static const CGFloat kFindBarH      = 36.0;
         hitArea.action      = @selector(tabButtonClicked:);
         [item addSubview:hitArea];
 
-        // Keep a ref on the tab for title updates
         tab.tabButton = hitArea;
 
         [_tabBarView addSubview:item];
         x += tabW + 2;
     }
 
-    // Add "+" button after the last tab
+    // "+" new-tab button
     NSButton* addBtn = [self makeSymbolButton:@"plus" size:12 tooltip:@"New Tab (⌘T)"];
     CGFloat addX = x + 4;
     addBtn.frame = NSMakeRect(addX, (kTabBarH - 24) / 2, 24, 24);
@@ -1184,6 +1377,14 @@ static const CGFloat kFindBarH      = 36.0;
     [_tabBarView addSubview:addBtn];
 }
 
+/**
+ * @brief   Create an SF Symbols toolbar button.
+ *
+ * @param   sym     The SF Symbol name (e.g. @"chevron.left").
+ * @param   ptSize  The point size of the symbol.
+ * @param   tip     The tooltip string.
+ * @return  A configured NSButton with circular bezel style.
+ */
 - (NSButton*)makeSymbolButton:(NSString*)sym size:(CGFloat)ptSize tooltip:(NSString*)tip {
     NSImageSymbolConfiguration* cfg = [NSImageSymbolConfiguration
         configurationWithPointSize:ptSize weight:NSFontWeightRegular];
@@ -1197,14 +1398,24 @@ static const CGFloat kFindBarH      = 36.0;
     return btn;
 }
 
-// Legacy overload used by older call sites
+/// Legacy overload: make a 15pt symbol button.
 - (NSButton*)makeSymbolButton:(NSString*)sym tooltip:(NSString*)tip {
     return [self makeSymbolButton:sym size:15 tooltip:tip];
 }
 
-// ── Context menu (right-click on web view) ────────────────────────────────────
-// We inject a JS listener instead of using the WKUIDelegate context menu API
-// (which requires macOS 13+ for full link info). This works on all targets.
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Context Menu Injection (Right-Click on Web View)
+// ───────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @brief   Inject a JS event listener that tracks context-menu link targets.
+ *
+ * @details Uses a document-level contextmenu listener to store the closest
+ *          anchor's href on window._kbContextURL. This is a fallback for
+ *          macOS < 13 which lacks the WKUIDelegate context menu API.
+ *
+ * @param   wv  The WKWebView to inject the script into.
+ */
 - (void)injectContextMenuScript:(WKWebView*)wv {
     NSString* js = @""
     "document.addEventListener('contextmenu', function(e) {"
@@ -1219,35 +1430,38 @@ static const CGFloat kFindBarH      = 36.0;
     [wv evaluateJavaScript:js completionHandler:nil];
 }
 
-// ── NSTextFieldDelegate ───────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name NSTextFieldDelegate (URL field autocomplete)
+// ───────────────────────────────────────────────────────────────────────────────
 
+/**
+ * @brief   Provide URL autocomplete suggestions from open tabs, history, and bookmarks.
+ */
 - (NSArray<NSString*>*)control:(NSControl*)control textView:(NSTextView*)textView completions:(NSArray<NSString*>*)words forPartialWordRange:(NSRange)charRange indexOfSelectedItem:(NSInteger*)index {
     if (control != _urlField) return words;
-    
+
     NSString* partial = [control.stringValue substringWithRange:charRange];
     if (partial.length < 2) return words;
 
     NSMutableArray* results = [NSMutableArray new];
-    // 1. Check open tabs
     for (BrowserTab* t in _tabManager.tabs) {
         if ([t.url containsString:partial]) [results addObject:t.url];
     }
-    // 2. Check history
     for (HistoryEntry* e in [HistoryManager profileShared].entries) {
         if ([e.url containsString:partial]) [results addObject:e.url];
         if (results.count > 10) break;
     }
-    // 3. Check bookmarks
     for (Bookmark* b in [BookmarkManager profileShared].bookmarks) {
         if ([b.url containsString:partial]) [results addObject:b.url];
         if (results.count > 20) break;
     }
 
-    // Deduplicate
     return [[NSSet setWithArray:results] allObjects];
 }
 
-// ── Window delegate ───────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name NSWindowDelegate
+// ───────────────────────────────────────────────────────────────────────────────
 
 - (void)windowDidResize:(NSNotification*)_ {
     [self layoutChrome];

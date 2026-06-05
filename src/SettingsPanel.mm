@@ -1,18 +1,32 @@
+/**
+ * @file      SettingsPanel.mm
+ * @project   BuildBrowser
+ * @brief     Settings sheet with sidebar navigation and content panes.
+ *
+ * @details   macOS-style settings panel: sidebar on the left with section
+ *            names and SF Symbols, content pane on the right. Sections:
+ *            General (homepage, search engine, default browser),
+ *            Launchers (domain aliases), Privacy (JS, pop-ups, private
+ *            browsing, ad block), Updates (feed URL, auto-check),
+ *            Appearance (bookmarks bar), Data (clear history, reset).
+ *            Presented as a sheet on the browser window.
+ *
+ * @author    BuildBrowser Team
+ * @date      2024-2026
+ */
+
 #import "SettingsManager.h"
 #import "HistoryManager.h"
 #import "ProfileManager.h"
 #import "UpdateManager.h"
 #import "DefaultBrowserManager.h"
 
+/// Fallback update feed URL if the user clears the field.
 static NSString* const kDefaultUpdateFeedURL = @"https://raw.githubusercontent.com/kiro-browser/browser-core/dev/updates/manifest.json";
 
-// ── SettingsPanel ─────────────────────────────────────────────────────────────
-// macOS-style settings: sidebar nav on the left, content pane on the right.
-@interface SettingsPanel : NSWindowController <NSTableViewDataSource, NSTableViewDelegate>
-+ (void)showAsSheetOnWindow:(NSWindow*)parent;
-@end
+#pragma mark - SettingsSidebarItem
 
-// ── Row model for the sidebar ─────────────────────────────────────────────────
+/// Simple model object for a sidebar row.
 @interface SettingsSidebarItem : NSObject
 @property (copy) NSString* label;
 @property (copy) NSString* symbol;
@@ -25,9 +39,9 @@ static NSString* const kDefaultUpdateFeedURL = @"https://raw.githubusercontent.c
 }
 @end
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+#pragma mark - UI Helpers
 
-// A rounded group box that looks like a macOS settings card
+/// Creates a rounded group box (macOS settings card style).
 static NSView* makeGroupBox(CGFloat x, CGFloat y, CGFloat w, CGFloat h) {
     NSView* box = [[NSView alloc] initWithFrame:NSMakeRect(x, y, w, h)];
     box.wantsLayer = YES;
@@ -38,7 +52,7 @@ static NSView* makeGroupBox(CGFloat x, CGFloat y, CGFloat w, CGFloat h) {
     return box;
 }
 
-// A full-width separator line inside a group box
+/// Creates a horizontal separator line inside a group box.
 static NSView* makeSeparator(CGFloat y, CGFloat w) {
     NSView* sep = [[NSView alloc] initWithFrame:NSMakeRect(16, y, w - 32, 1)];
     sep.wantsLayer = YES;
@@ -46,20 +60,24 @@ static NSView* makeSeparator(CGFloat y, CGFloat w) {
     return sep;
 }
 
-// Label on the left side of a row
+/// Creates a standard row label on the left side of a setting.
 static NSTextField* makeRowLabel(NSString* text) {
     NSTextField* f = [NSTextField labelWithString:text];
     f.font = [NSFont systemFontOfSize:13];
     return f;
 }
 
-// ── Main implementation ───────────────────────────────────────────────────────
+#pragma mark - SettingsPanel
+
+@interface SettingsPanel : NSWindowController <NSTableViewDataSource, NSTableViewDelegate>
++ (void)showAsSheetOnWindow:(NSWindow*)parent;
+@end
 
 @implementation SettingsPanel {
     // Sidebar
     NSTableView*  _sidebar;
     NSArray*      _sidebarItems;
-    // Content stack (one NSView per section, swapped in/out)
+    // Content host
     NSView*       _contentHost;
     NSArray*      _contentViews;
     // General
@@ -78,10 +96,15 @@ static NSTextField* makeRowLabel(NSString* text) {
     NSButton*     _autoCheckToggle;
     // Appearance
     NSButton*     _bookmarksBarToggle;
-    // Data
+    // General
     NSWindow*     _parentWindow;
 }
 
+/**
+ * @brief   Returns the shared SettingsPanel singleton.
+ *
+ * @return  The singleton instance.
+ */
 + (instancetype)shared {
     static SettingsPanel* inst;
     static dispatch_once_t t;
@@ -89,6 +112,11 @@ static NSTextField* makeRowLabel(NSString* text) {
     return inst;
 }
 
+/**
+ * @brief   Show the settings panel as a sheet on the given window.
+ *
+ * @param   parent  The parent window to attach the sheet.
+ */
 + (void)showAsSheetOnWindow:(NSWindow*)parent {
     SettingsPanel* p = [SettingsPanel shared];
     [p reloadValues];
@@ -96,6 +124,11 @@ static NSTextField* makeRowLabel(NSString* text) {
     [parent beginSheet:p.window completionHandler:nil];
 }
 
+/**
+ * @brief   Initialize the settings window.
+ *
+ * @return  An initialized SettingsPanel.
+ */
 - (instancetype)init {
     NSWindow* win = [[NSWindow alloc]
         initWithContentRect:NSMakeRect(0, 0, 620, 420)
@@ -110,14 +143,19 @@ static NSTextField* makeRowLabel(NSString* text) {
     return self;
 }
 
-// ── Build UI ──────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name UI Building
+// ───────────────────────────────────────────────────────────────────────────────
 
+/**
+ * @brief   Build the complete settings UI: sidebar navigation + content panes.
+ */
 - (void)buildUI {
     NSView* root = self.window.contentView;
     root.wantsLayer = YES;
     CGFloat W = 620, H = 420;
 
-    // ── Sidebar (left 160px) ──────────────────────────────────────────────────
+    // Sidebar (left 160px)
     NSVisualEffectView* sidebarBg = [[NSVisualEffectView alloc]
         initWithFrame:NSMakeRect(0, 0, 160, H)];
     sidebarBg.material     = NSVisualEffectMaterialSidebar;
@@ -125,13 +163,11 @@ static NSTextField* makeRowLabel(NSString* text) {
     sidebarBg.state        = NSVisualEffectStateActive;
     [root addSubview:sidebarBg];
 
-    // Sidebar title
     NSTextField* sideTitle = [NSTextField labelWithString:@"Settings"];
     sideTitle.frame = NSMakeRect(16, H - 52, 128, 22);
     sideTitle.font  = [NSFont boldSystemFontOfSize:15];
     [sidebarBg addSubview:sideTitle];
 
-    // Sidebar table
     NSScrollView* sideScroll = [[NSScrollView alloc]
         initWithFrame:NSMakeRect(0, 0, 160, H - 60)];
     sideScroll.drawsBackground = NO;
@@ -167,7 +203,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     divider.layer.backgroundColor = [NSColor separatorColor].CGColor;
     [root addSubview:divider];
 
-    // ── Content host (right side) ─────────────────────────────────────────────
+    // Content host (right side)
     _contentHost = [[NSView alloc] initWithFrame:NSMakeRect(161, 0, W - 161, H)];
     [root addSubview:_contentHost];
 
@@ -186,7 +222,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     }
     ((NSView*)_contentViews[0]).hidden = NO;
 
-    // ── Done button (bottom right, always visible) ────────────────────────────
+    // Done button (bottom right, always visible)
     NSButton* done = [NSButton buttonWithTitle:@"Done" target:self action:@selector(done:)];
     done.frame         = NSMakeRect(W - 100, 16, 84, 28);
     done.bezelStyle    = NSBezelStyleRounded;
@@ -194,8 +230,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     [root addSubview:done];
 }
 
-// ── Content panes ─────────────────────────────────────────────────────────────
-
+/** @brief   Build the "General" content pane. */
 - (NSView*)buildGeneralPane {
     NSView* v = [NSView new];
     CGFloat W = 459, y = 340;
@@ -205,14 +240,11 @@ static NSTextField* makeRowLabel(NSString* text) {
     title.font  = [NSFont boldSystemFontOfSize:17];
     [v addSubview:title]; y -= 36;
 
-    // Homepage group
     NSView* box1 = makeGroupBox(16, y - 44, W - 32, 52);
     [v addSubview:box1];
-
     NSTextField* hpLabel = makeRowLabel(@"Homepage");
     hpLabel.frame = NSMakeRect(16, 16, 100, 20);
     [box1 addSubview:hpLabel];
-
     _homepageField = [[NSTextField alloc] initWithFrame:NSMakeRect(120, 14, W - 32 - 136, 22)];
     _homepageField.bezelStyle    = NSTextFieldRoundedBezel;
     _homepageField.focusRingType = NSFocusRingTypeNone;
@@ -220,20 +252,16 @@ static NSTextField* makeRowLabel(NSString* text) {
     [box1 addSubview:_homepageField];
     y -= 64;
 
-    // Search engine group
     NSView* box2 = makeGroupBox(16, y - 64, W - 32, 72);
     [v addSubview:box2];
-
     NSTextField* seLabel = makeRowLabel(@"Search URL");
     seLabel.frame = NSMakeRect(16, 34, 100, 20);
     [box2 addSubview:seLabel];
-
     _searchField = [[NSTextField alloc] initWithFrame:NSMakeRect(120, 32, W - 32 - 136, 22)];
     _searchField.bezelStyle    = NSTextFieldRoundedBezel;
     _searchField.focusRingType = NSFocusRingTypeNone;
     _searchField.font          = [NSFont systemFontOfSize:13];
     [box2 addSubview:_searchField];
-
     NSTextField* hint = [NSTextField labelWithString:@"Use %@ as the search query placeholder"];
     hint.frame     = NSMakeRect(120, 12, W - 32 - 136, 16);
     hint.font      = [NSFont systemFontOfSize:10];
@@ -241,20 +269,16 @@ static NSTextField* makeRowLabel(NSString* text) {
     [box2 addSubview:hint];
     y -= 84;
 
-    // Default browser group
     NSView* box3 = makeGroupBox(16, y - 58, W - 32, 58);
     [v addSubview:box3];
-
     NSTextField* dbLabel = makeRowLabel(@"Default Browser");
     dbLabel.frame = NSMakeRect(16, 30, 160, 18);
     [box3 addSubview:dbLabel];
-
     _defaultBrowserStatusLabel = [NSTextField labelWithString:@""];
     _defaultBrowserStatusLabel.frame = NSMakeRect(16, 12, W - 32 - 150, 16);
     _defaultBrowserStatusLabel.font = [NSFont systemFontOfSize:11];
     _defaultBrowserStatusLabel.textColor = [NSColor secondaryLabelColor];
     [box3 addSubview:_defaultBrowserStatusLabel];
-
     _defaultBrowserButton = [NSButton buttonWithTitle:@"Make Default" target:self action:@selector(makeDefaultBrowser:)];
     _defaultBrowserButton.frame = NSMakeRect(W - 32 - 118, 17, 110, 24);
     _defaultBrowserButton.bezelStyle = NSBezelStyleRounded;
@@ -263,6 +287,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     return v;
 }
 
+/** @brief   Build the "Launchers" content pane. */
 - (NSView*)buildLaunchersPane {
     NSView* v = [NSView new];
     CGFloat W = 459, y = 340;
@@ -299,6 +324,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     return v;
 }
 
+/** @brief   Build the "Privacy" content pane. */
 - (NSView*)buildPrivacyPane {
     NSView* v = [NSView new];
     CGFloat W = 459, y = 340;
@@ -311,7 +337,6 @@ static NSTextField* makeRowLabel(NSString* text) {
     NSView* box = makeGroupBox(16, y - 4*44 - 2, W - 32, 4*44 + 2);
     [v addSubview:box];
 
-    // Build toggles individually to avoid ARC pointer-to-ivar issues
     NSString* labels[] = { @"Enable JavaScript", @"Block pop-up windows", @"Private browsing", @"Block ads and trackers" };
     NSString* subtitles[] = {
         @"Required by most modern websites",
@@ -349,6 +374,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     return v;
 }
 
+/** @brief   Build the "Updates" content pane. */
 - (NSView*)buildUpdatesPane {
     NSView* v = [NSView new];
     CGFloat W = 459, y = 340;
@@ -394,6 +420,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     return v;
 }
 
+/** @brief   Build the "Appearance" content pane. */
 - (NSView*)buildAppearancePane {
     NSView* v = [NSView new];
     CGFloat W = 459, y = 340;
@@ -418,6 +445,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     return v;
 }
 
+/** @brief   Build the "Data" content pane. */
 - (NSView*)buildDataPane {
     NSView* v = [NSView new];
     CGFloat W = 459, y = 340;
@@ -430,7 +458,6 @@ static NSTextField* makeRowLabel(NSString* text) {
     NSView* box = makeGroupBox(16, y - 96, W - 32, 96);
     [v addSubview:box];
 
-    // Clear history row
     NSTextField* histLabel = makeRowLabel(@"Browsing History");
     histLabel.frame = NSMakeRect(16, 56, 200, 18);
     [box addSubview:histLabel];
@@ -446,7 +473,6 @@ static NSTextField* makeRowLabel(NSString* text) {
 
     [box addSubview:makeSeparator(44, W - 32)];
 
-    // Reset defaults row
     NSTextField* resetLabel = makeRowLabel(@"Reset All Settings");
     resetLabel.frame = NSMakeRect(16, 12, 200, 18);
     [box addSubview:resetLabel];
@@ -458,8 +484,13 @@ static NSTextField* makeRowLabel(NSString* text) {
     return v;
 }
 
-// ── Reload values ─────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Data Loading
+// ───────────────────────────────────────────────────────────────────────────────
 
+/**
+ * @brief   Load current setting values into all UI controls.
+ */
 - (void)reloadValues {
     SettingsManager* s = [SettingsManager profileShared];
     _homepageField.stringValue     = s.homepage ?: @"";
@@ -475,8 +506,13 @@ static NSTextField* makeRowLabel(NSString* text) {
     [self reloadDefaultBrowserStatus];
 }
 
-// ── Actions ───────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Actions
+// ───────────────────────────────────────────────────────────────────────────────
 
+/**
+ * @brief   Save all settings and dismiss the sheet.
+ */
 - (void)done:(id)_ {
     SettingsManager* s  = [SettingsManager profileShared];
     NSString* homepage = [_homepageField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -501,6 +537,9 @@ static NSTextField* makeRowLabel(NSString* text) {
     _parentWindow = nil;
 }
 
+/**
+ * @brief   Trigger an immediate update check.
+ */
 - (void)checkNowForUpdates:(id)_ {
     SettingsManager* s = [SettingsManager profileShared];
     NSString* updateFeed = [_updateFeedField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -509,6 +548,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     [[UpdateManager shared] checkForUpdates];
 }
 
+/// Refresh the default browser status label and button.
 - (void)reloadDefaultBrowserStatus {
     BOOL isDefault = [DefaultBrowserManager isDefaultBrowser];
     _defaultBrowserStatusLabel.stringValue = [DefaultBrowserManager statusText];
@@ -516,6 +556,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     _defaultBrowserButton.title = isDefault ? @"Default" : @"Make Default";
 }
 
+/// Attempt to set BuildBrowser as the default browser.
 - (void)makeDefaultBrowser:(id)_ {
     NSError* error = nil;
     if ([DefaultBrowserManager setAsDefaultBrowserWithError:&error]) {
@@ -531,6 +572,12 @@ static NSTextField* makeRowLabel(NSString* text) {
     [self reloadDefaultBrowserStatus];
 }
 
+/**
+ * @brief   Convert the domain launchers dictionary to editable text format.
+ *
+ * @param   launchers  The launchers dictionary.
+ * @return  A string with one "alias = url | search-url" per line.
+ */
 - (NSString*)textFromLaunchers:(NSDictionary*)launchers {
     NSMutableArray<NSString*>* lines = [NSMutableArray new];
     NSArray<NSString*>* aliases = [[launchers allKeys] sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
@@ -547,6 +594,12 @@ static NSTextField* makeRowLabel(NSString* text) {
     return [lines componentsJoinedByString:@"\n"];
 }
 
+/**
+ * @brief   Parse the launchers text format back into a dictionary.
+ *
+ * @param   text  The multi-line text to parse.
+ * @return  A dictionary mapping aliases to @{ @"url", @"search" }.
+ */
 - (NSDictionary*)launchersFromText:(NSString*)text {
     NSMutableDictionary* launchers = [NSMutableDictionary new];
     NSArray<NSString*>* lines = [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
@@ -571,6 +624,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     return launchers;
 }
 
+/// Clear all browsing history after confirmation.
 - (void)clearHistory:(id)_ {
     NSAlert* a        = [NSAlert new];
     a.messageText     = @"Clear all browsing history?";
@@ -582,6 +636,7 @@ static NSTextField* makeRowLabel(NSString* text) {
     }];
 }
 
+/// Reset all settings to defaults after confirmation.
 - (void)resetDefaults:(id)_ {
     NSAlert* a        = [NSAlert new];
     a.messageText     = @"Reset all settings to defaults?";
@@ -598,7 +653,9 @@ static NSTextField* makeRowLabel(NSString* text) {
     }];
 }
 
-// ── NSTableViewDataSource / Delegate (sidebar) ────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name NSTableViewDataSource / Delegate (Sidebar)
+// ───────────────────────────────────────────────────────────────────────────────
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView*)_ { return (NSInteger)_sidebarItems.count; }
 

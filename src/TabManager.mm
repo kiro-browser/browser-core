@@ -1,3 +1,20 @@
+/**
+ * @file      TabManager.mm
+ * @project   BuildBrowser
+ * @brief     Tab lifecycle, navigation, delegates, and context menus.
+ *
+ * @details   Owns all BrowserTab instances for a single window. Handles tab
+ *            creation (with per-profile WKWebViewConfiguration), URL loading
+ *            (with sanitization, buildbrowser:// commands, file:// URLs),
+ *            KVO for progress/title/URL changes, WKNavigationDelegate for
+ *            loading lifecycle, WKUIDelegate for new windows, favicon
+ *            fetching (via page <link> or Google fallback), error pages,
+ *            context menus, and middle-click link handling.
+ *
+ * @author    BuildBrowser Team
+ * @date      2024-2026
+ */
+
 #import "TabManager.h"
 #import "ContentBlocker.h"
 #import "DownloadManager.h"
@@ -5,14 +22,38 @@
 #import "BookmarkManager.h"
 #import <Security/Security.h>
 
+/// Internal scheme prefix for browser commands (e.g. buildbrowser://start).
 static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
 
+// ───────────────────────────────────────────────────────────────────────────────
+// @name BrowserContextWebView — Custom WKWebView subclass
+// ───────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @class     BrowserContextWebView
+ * @brief     WKWebView subclass that intercepts right-clicks and middle-clicks.
+ *
+ * @details   Overrides rightMouseDown: to evaluate JS at the click point and
+ *            determine the link/image under the cursor, then calls a context
+ *            menu handler block. Overrides otherMouseDown: to detect middle
+ *            clicks on links and open them in a new tab.
+ */
 @interface BrowserContextWebView : WKWebView
 @property (copy) void (^contextMenuHandler)(BrowserContextWebView* webView, NSDictionary* info, NSEvent* event);
 @property (copy) void (^middleClickLinkHandler)(NSString* url);
 @end
 
 @implementation BrowserContextWebView
+
+/**
+ * @brief   Intercept right-click to extract link/image info via JS.
+ *
+ * @details Evaluates a JS function at the click coordinates to find the
+ *          nearest <a> and <img> elements, then passes the info dictionary
+ *          ({linkURL, linkText, imageURL, imageAlt}) to the contextMenuHandler.
+ *
+ * @param   event  The right mouse down event.
+ */
 - (void)rightMouseDown:(NSEvent*)event {
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     CGFloat domX = point.x;
@@ -35,6 +76,11 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
     }];
 }
 
+/**
+ * @brief   Intercept middle-click to detect links and open in a new tab.
+ *
+ * @param   event  The mouse down event (button 2 = middle).
+ */
 - (void)otherMouseDown:(NSEvent*)event {
     if (event.buttonNumber != 2) {
         [super otherMouseDown:event];
@@ -64,18 +110,21 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
         }
     }];
 }
+
 @end
 
-// ── BrowserTab ───────────────────────────────────────────────────────────────
+#pragma mark - BrowserTab
 
 @implementation BrowserTab
 @end
 
-// ── TabManager ───────────────────────────────────────────────────────────────
+#pragma mark - Private Interface
 
 @interface TabManager () <WKNavigationDelegate, WKUIDelegate>
 @property (strong) NSMutableArray<BrowserTab*>* mutableTabs;
 @property (assign) NSInteger currentIndex;
+
+// Internal helpers
 + (WKWebsiteDataStore*)websiteDataStoreForProfile:(Profile*)profile privateBrowsing:(BOOL)privateBrowsing;
 + (NSString*)startPageHTML;
 + (NSString*)commandPageHTMLForCommand:(NSString*)command;
@@ -93,8 +142,16 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
 - (BOOL)shouldOpenSearchClickInNewTab:(WKNavigationAction*)navigationAction fromWebView:(WKWebView*)webView;
 @end
 
+#pragma mark - Implementation
+
 @implementation TabManager
 
+/**
+ * @brief   Initialize with a profile for data store and settings isolation.
+ *
+ * @param   profile  The profile to associate with this tab manager.
+ * @return  An initialized TabManager.
+ */
 - (instancetype)initWithProfile:(Profile*)profile {
     self = [super init];
     if (self) {
@@ -109,15 +166,28 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
 - (BrowserTab*)activeTab      { return _currentIndex >= 0 ? _mutableTabs[_currentIndex] : nil; }
 - (NSInteger)activeIndex      { return _currentIndex; }
 
-// ── Tab creation ─────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Tab Creation
+// ───────────────────────────────────────────────────────────────────────────────
 
+/**
+ * @brief   Create a new tab with a URL.
+ *
+ * @details Configures a WKWebView with the profile's data store, content
+ *          blocker, and JavaScript settings. Sets up KVO for progress, title,
+ *          and URL changes. Creates the tab strip button and wires the
+ *          context/middle-click handlers. Switches to the new tab immediately.
+ *
+ * @param   url  The URL to load (passed through sanitizeURL:).
+ * @return  The newly created BrowserTab.
+ */
 - (BrowserTab*)newTabWithURL:(NSString*)url {
     WKWebViewConfiguration* config = [WKWebViewConfiguration new];
     SettingsManager* settings = [SettingsManager profileShared];
     config.preferences.javaScriptCanOpenWindowsAutomatically = !settings.blockPopups;
     config.defaultWebpagePreferences.allowsContentJavaScript = settings.javascriptEnabled;
     config.websiteDataStore = [TabManager websiteDataStoreForProfile:_profile privateBrowsing:settings.privateBrowsing];
-    
+
     [[ContentBlocker shared] applyToConfiguration:config completion:nil];
 
     BrowserTab* tab   = [BrowserTab new];
@@ -136,7 +206,6 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
     tab.url   = url ?: @"";
     tab.pinned = NO;
 
-    // Tab strip button
     tab.tabButton = [NSButton buttonWithTitle:@"New Tab" target:nil action:nil];
     tab.tabButton.bezelStyle    = NSBezelStyleRecessed;
     tab.tabButton.buttonType    = NSButtonTypePushOnPushOff;
@@ -152,7 +221,6 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
     [tab.webView addObserver:self forKeyPath:@"URL"
                     options:NSKeyValueObservingOptionNew context:nil];
 
-    // Set default icon
     tab.favicon = [NSImage imageWithSystemSymbolName:@"globe" accessibilityDescription:nil];
 
     NSInteger index = (NSInteger)_mutableTabs.count;
@@ -166,6 +234,14 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
     return tab;
 }
 
+/**
+ * @brief   Create a per-profile WKWebsiteDataStore.
+ *
+ * @param   profile           The profile to create a store for.
+ * @param   privateBrowsing   If YES, returns a non-persistent store.
+ * @return  A WKWebsiteDataStore (non-persistent for private, per-profile on
+ *          macOS 14+, or the default store otherwise).
+ */
 + (WKWebsiteDataStore*)websiteDataStoreForProfile:(Profile*)profile privateBrowsing:(BOOL)privateBrowsing {
     if (privateBrowsing) return [WKWebsiteDataStore nonPersistentDataStore];
 
@@ -177,24 +253,33 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
     return [WKWebsiteDataStore defaultDataStore];
 }
 
-// ── Tab switching / closing ───────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Tab Switching / Closing
+// ───────────────────────────────────────────────────────────────────────────────
 
+/**
+ * @brief   Switch to the tab at the given index.
+ */
 - (void)switchToIndex:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)_mutableTabs.count) return;
     _currentIndex = index;
     if (self.onTabSwitched) self.onTabSwitched(_mutableTabs[index], index);
 }
 
+/**
+ * @brief   Close the tab at the given index.
+ *
+ * @details If this is the last remaining tab, navigates home instead of
+ *          closing it. Removes KVO observers before releasing the web view.
+ */
 - (void)closeTabAtIndex:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)_mutableTabs.count) return;
 
-    // Never close the last tab — navigate home instead
     if (_mutableTabs.count == 1) {
         [self loadURL:[SettingsManager profileShared].homepage inTab:_mutableTabs[0]];
         return;
     }
 
-    // Remove KVO before releasing the web view
     BrowserTab* dying = _mutableTabs[index];
     [dying.webView removeObserver:self forKeyPath:@"estimatedProgress"];
     [dying.webView removeObserver:self forKeyPath:@"title"];
@@ -208,13 +293,28 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
     [self switchToIndex:next];
 }
 
+/**
+ * @brief   Set or clear the pinned state for a tab.
+ */
 - (void)setPinned:(BOOL)pinned forTabAtIndex:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)_mutableTabs.count) return;
     _mutableTabs[index].pinned = pinned;
 }
 
-// ── URL loading ───────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name URL Loading
+// ───────────────────────────────────────────────────────────────────────────────
 
+/**
+ * @brief   Load a (possibly raw) URL in the given tab.
+ *
+ * @details Handles buildbrowser:// commands (start page, bookmarks, history,
+ *          etc.), file:// URLs with read access, and standard HTTP/HTTPS
+ *          requests. The input is first sanitized via sanitizeURL:.
+ *
+ * @param   raw  The raw URL string input.
+ * @param   tab  The target tab.
+ */
 - (void)loadURL:(NSString*)raw inTab:(BrowserTab*)tab {
     NSString* url = [TabManager sanitizeURL:raw];
     tab.url = url;
@@ -249,6 +349,20 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
     if (nsurl) [tab.webView loadRequest:[NSURLRequest requestWithURL:nsurl]];
 }
 
+/**
+ * @brief   Sanitize and normalize a raw URL input.
+ *
+ * @details Rules:
+ *          - Empty input -> buildbrowser://start
+ *          - @alias commands -> expand via domain launchers
+ *          - http/https scheme -> pass through
+ *          - localhost / 127.0.0.1 -> prepend http://
+ *          - Contains dot, no spaces -> treat as domain, prepend https://
+ *          - Everything else -> search engine query
+ *
+ * @param   input  The raw input string.
+ * @return  A fully qualified URL string.
+ */
 + (NSString*)sanitizeURL:(NSString*)input {
     NSString* trimmed = [input stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!trimmed.length) return kBuildBrowserStartURL;
@@ -285,6 +399,9 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
     return [NSString stringWithFormat:searchTemplate, enc];
 }
 
+/**
+ * @brief   Convert a file:// URL or local path input to an NSURL.
+ */
 + (NSURL*)fileURLFromInput:(NSString*)input {
     if (!input.length) return nil;
 
@@ -308,6 +425,12 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
     return nil;
 }
 
+/**
+ * @brief   Determine the read-access URL for a file:// URL.
+ *
+ * @details For directories, returns the directory itself. For files, returns
+ *          the parent directory so WebKit can read resources alongside.
+ */
 + (NSURL*)readAccessURLForFileURL:(NSURL*)fileURL {
     if (!fileURL.isFileURL) return fileURL;
 
@@ -319,6 +442,11 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
     return parent ?: fileURL;
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Built-in Pages (HTML)
+// ───────────────────────────────────────────────────────────────────────────────
+
+/// Generate the buildbrowser://start page HTML.
 + (NSString*)startPageHTML {
     return @"<!doctype html><html><head><meta charset='utf-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -353,6 +481,7 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
     "</main></body></html>";
 }
 
+/// Generate HTML for a buildbrowser://command page.
 + (NSString*)commandPageHTMLForCommand:(NSString*)command {
     NSString* title = [TabManager displayNameForCommand:command];
     NSString* body = @"";
@@ -392,6 +521,7 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
         "</div></main></body></html>", title, title, body];
 }
 
+/// Return a human-readable display name for a buildbrowser:// command.
 + (NSString*)displayNameForCommand:(NSString*)command {
     if ([command isEqualToString:@"start"]) return @"BuildBrowser Start";
     if ([command isEqualToString:@"bookmarks"]) return @"Bookmarks";
@@ -402,7 +532,9 @@ static NSString* const kBuildBrowserStartURL = @"buildbrowser://start";
     return @"BuildBrowser Commands";
 }
 
-// ── WKNavigationDelegate ──────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name WKNavigationDelegate
+// ───────────────────────────────────────────────────────────────────────────────
 
 - (void)webView:(WKWebView*)wv didStartProvisionalNavigation:(WKNavigation*)_ {
     BrowserTab* tab = [self tabForWebView:wv];
@@ -473,11 +605,11 @@ decisionHandler:(void (^)(WKNavigationResponsePolicy))decisionHandler {
     decisionHandler(WKNavigationResponsePolicyAllow);
 }
 
-- (void)webView:(WKWebView*)webView navigationAction:(WKNavigationAction*)navigationAction didBecomeDownload:(WKDownload*)download API_AVAILABLE(macos(11.3)) {
+- (void)webView:(WKWebView*)webView navigationAction:(WKNavigationAction*)navigationAction didBecomeDownload:(WKDownload*)download {
     [[DownloadManager profileShared] startDownload:download];
 }
 
-- (void)webView:(WKWebView*)webView navigationResponse:(WKNavigationResponse*)navigationResponse didBecomeDownload:(WKDownload*)download API_AVAILABLE(macos(11.3)) {
+- (void)webView:(WKWebView*)webView navigationResponse:(WKNavigationResponse*)navigationResponse didBecomeDownload:(WKDownload*)download {
     [[DownloadManager profileShared] startDownload:download];
 }
 
@@ -503,7 +635,9 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
     completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, nil);
 }
 
-// ── KVO ───────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name KVO
+// ───────────────────────────────────────────────────────────────────────────────
 
 - (void)observeValueForKeyPath:(NSString*)kp ofObject:(id)obj
                         change:(NSDictionary*)_ context:(void*)__ {
@@ -526,10 +660,17 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
     }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Favicon
+// ───────────────────────────────────────────────────────────────────────────────
 
+/**
+ * @brief   Extract the favicon for a tab.
+ *
+ * @details First attempts to find a <link rel="icon"> via JS evaluation.
+ *          Falls back to the Google Favicons API using the domain.
+ */
 - (void)updateFaviconForTab:(BrowserTab*)tab {
-    // 1. Try to extract from page via JS
     NSString* js = @"(function() {"
     "  var rels = ['icon', 'shortcut icon', 'apple-touch-icon'];"
     "  for (var i = 0; i < rels.length; i++) {"
@@ -543,7 +684,6 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
     [tab.webView evaluateJavaScript:js completionHandler:^(id result, NSError* error) {
         NSString* iconURLString = [result isKindOfClass:[NSString class]] ? (NSString*)result : nil;
         if (!iconURLString.length) {
-            // 2. Fallback to Google Favicon API
             NSURL* url = [NSURL URLWithString:tab.url];
             if (url.host && !url.isFileURL) {
                 iconURLString = [NSString stringWithFormat:@"https://www.google.com/s2/favicons?domain=%@&sz=32", url.host];
@@ -556,6 +696,9 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
     }];
 }
 
+/**
+ * @brief   Download a favicon from a URL and attach it to the tab.
+ */
 - (void)downloadFavicon:(NSString*)urlString forTab:(BrowserTab*)tab {
     if (![urlString isKindOfClass:[NSString class]] || !urlString.length) return;
     NSURL* url = [NSURL URLWithString:urlString];
@@ -585,6 +728,13 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
     }] resume];
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Error Pages
+// ───────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @brief   Show an error page in the tab for failed navigations.
+ */
 - (void)showErrorPageForTab:(BrowserTab*)tab error:(NSError*)error failedURL:(NSString*)failedURL {
     NSString* url = failedURL.length ? failedURL : tab.url;
     tab.url = url;
@@ -595,6 +745,7 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
     if (self.onURLChanged) self.onURLChanged(tab, tab.url);
 }
 
+/// Generate an error page HTML with retry and continue-anyway options.
 + (NSString*)errorPageHTMLForURL:(NSString*)url error:(NSError*)error {
     NSString* safeURL = [TabManager htmlEscape:url ?: @""];
     NSString* detail = [TabManager htmlEscape:error.localizedDescription ?: @"The page could not be loaded."];
@@ -627,6 +778,7 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
         "</main></body></html>", detail, safeURL, retryHref, continueLink];
 }
 
+/// Determine whether to show a "Continue Anyway" link for ATS-blocked HTTP pages.
 + (BOOL)shouldOfferContinueForError:(NSError*)error url:(NSString*)url {
     if (![url.lowercaseString hasPrefix:@"http://"]) return NO;
     if ([error.domain isEqualToString:NSURLErrorDomain] &&
@@ -636,6 +788,7 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
     return NO;
 }
 
+/// Escape HTML special characters in a string.
 + (NSString*)htmlEscape:(NSString*)value {
     NSString* escaped = [value stringByReplacingOccurrencesOfString:@"&" withString:@"&amp;"];
     escaped = [escaped stringByReplacingOccurrencesOfString:@"<" withString:@"&lt;"];
@@ -645,6 +798,17 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
     return escaped;
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Context Menu
+// ───────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @brief   Show a context menu for the web view.
+ *
+ * @details Provides items: Open Link in New Tab, Copy Link, Bookmark Link
+ *          (if a link was clicked), Save Image As, Copy Image Address
+ *          (if an image was clicked), Back, Forward, Reload.
+ */
 - (void)showContextMenuForWebView:(WKWebView*)webView info:(NSDictionary*)info event:(NSEvent*)event {
     NSString* linkURL = [info[@"linkURL"] isKindOfClass:[NSString class]] ? info[@"linkURL"] : @"";
     NSString* linkText = [info[@"linkText"] isKindOfClass:[NSString class]] ? info[@"linkText"] : @"";
@@ -654,18 +818,18 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
     if (linkURL.length) {
         NSDictionary* linkInfo = @{ @"url": linkURL, @"title": linkText.length ? linkText : linkURL };
         NSMenuItem* open = [[NSMenuItem alloc] initWithTitle:@"Open Link in New Tab"
-                                                      action:@selector(contextOpenLinkInNewTab:)
-                                               keyEquivalent:@""];
+                                                       action:@selector(contextOpenLinkInNewTab:)
+                                                keyEquivalent:@""];
         open.target = self; open.representedObject = linkInfo; [menu addItem:open];
 
         NSMenuItem* copy = [[NSMenuItem alloc] initWithTitle:@"Copy Link"
-                                                      action:@selector(contextCopyString:)
-                                               keyEquivalent:@""];
+                                                       action:@selector(contextCopyString:)
+                                                keyEquivalent:@""];
         copy.target = self; copy.representedObject = linkURL; [menu addItem:copy];
 
         NSMenuItem* bookmark = [[NSMenuItem alloc] initWithTitle:@"Bookmark Link"
-                                                          action:@selector(contextBookmarkLink:)
-                                                   keyEquivalent:@""];
+                                                           action:@selector(contextBookmarkLink:)
+                                                    keyEquivalent:@""];
         bookmark.target = self; bookmark.representedObject = linkInfo; [menu addItem:bookmark];
     }
 
@@ -673,13 +837,13 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
         if (menu.numberOfItems) [menu addItem:[NSMenuItem separatorItem]];
 
         NSMenuItem* save = [[NSMenuItem alloc] initWithTitle:@"Save Image As…"
-                                                      action:@selector(contextSaveImage:)
-                                               keyEquivalent:@""];
+                                                       action:@selector(contextSaveImage:)
+                                                keyEquivalent:@""];
         save.target = self; save.representedObject = imageURL; [menu addItem:save];
 
         NSMenuItem* copyImageURL = [[NSMenuItem alloc] initWithTitle:@"Copy Image Address"
-                                                              action:@selector(contextCopyString:)
-                                                       keyEquivalent:@""];
+                                                               action:@selector(contextCopyString:)
+                                                        keyEquivalent:@""];
         copyImageURL.target = self; copyImageURL.representedObject = imageURL; [menu addItem:copyImageURL];
     }
 
@@ -696,6 +860,8 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
 
     [NSMenu popUpContextMenu:menu withEvent:event forView:webView];
 }
+
+// ── Context menu action handlers ──────────────────────────────────────────────
 
 - (void)contextOpenLinkInNewTab:(NSMenuItem*)item {
     NSDictionary* info = [item.representedObject isKindOfClass:[NSDictionary class]] ? item.representedObject : @{};
@@ -746,6 +912,10 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
     [webView reload];
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Helpers
+// ───────────────────────────────────────────────────────────────────────────────
+
 - (NSString*)suggestedFilenameForURL:(NSString*)urlString {
     NSString* name = [NSURL URLWithString:urlString].lastPathComponent;
     if (!name.length) name = @"image";
@@ -760,6 +930,14 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
     [pb setString:value forType:NSPasteboardTypeString];
 }
 
+/**
+ * @brief   Extract certificate info from a SecTrustRef for the security indicator.
+ *
+ * @param   trust  The server trust reference.
+ * @param   host   The hostname for display.
+ * @return  A dictionary with keys: host, trusted, trustError, subject, issuer,
+ *          notBefore, notAfter, chainLength.
+ */
 - (NSDictionary*)certificateInfoForTrust:(SecTrustRef)trust host:(NSString*)host {
     NSMutableDictionary* info = [NSMutableDictionary new];
     info[@"host"] = host ?: @"";
@@ -803,6 +981,12 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
     return info;
 }
 
+/**
+ * @brief   Determine if a search results page click should open in a new tab.
+ *
+ * @details Currently handles DuckDuckGo result links (which use /l/ redirect
+ *          or uddg= parameter).
+ */
 - (BOOL)shouldOpenSearchClickInNewTab:(WKNavigationAction*)navigationAction fromWebView:(WKWebView*)webView {
     if (navigationAction.navigationType != WKNavigationTypeLinkActivated) return NO;
     NSURL* sourceURL = webView.URL;
@@ -818,6 +1002,9 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
     return YES;
 }
 
+/**
+ * @brief   Check whether a URL is a DuckDuckGo search results page.
+ */
 - (BOOL)isSearchResultsPage:(NSURL*)url {
     NSString* host = url.host.lowercaseString ?: @"";
     if (![host containsString:@"duckduckgo.com"]) return NO;
@@ -827,6 +1014,9 @@ completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NS
     return [path isEqualToString:@"/"] || [path isEqualToString:@"/html/"];
 }
 
+/**
+ * @brief   Find the BrowserTab associated with a given WKWebView.
+ */
 - (BrowserTab*)tabForWebView:(WKWebView*)wv {
     for (BrowserTab* t in _mutableTabs)
         if (t.webView == wv) return t;

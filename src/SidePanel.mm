@@ -1,7 +1,24 @@
+/**
+ * @file      SidePanel.mm
+ * @project   BuildBrowser
+ * @brief     Side panel showing bookmarks or history with search.
+ *
+ * @details   A floating panel (NSWindowController) with a segmented control
+ *            to switch between Bookmarks and History views. Supports filtering
+ *            via a search field, double-click to open in a new tab, and
+ *            context menus for bookmark editing/deletion. Uses an openURL
+ *            callback to communicate with the BrowserWindowController.
+ *
+ * @author    BuildBrowser Team
+ * @date      2024-2026
+ */
+
 #import <Cocoa/Cocoa.h>
 #import "BookmarkManager.h"
 #import "HistoryManager.h"
 #import "ProfileManager.h"
+
+#pragma mark - Interface
 
 @interface SidePanel : NSWindowController <NSTableViewDataSource, NSTableViewDelegate>
 @property (copy) void (^openURLCallback)(NSString* url);
@@ -10,17 +27,31 @@
 - (void)showHistory;
 @end
 
+/// The two display modes supported by the side panel.
 typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
 
+#pragma mark - Implementation
+
 @implementation SidePanel {
+    /// Segmented control for switching between Bookmarks and History.
     NSSegmentedControl* _segControl;
+    /// Table view displaying the filtered items.
     NSTableView*        _tableView;
+    /// Search field for filtering items by title or URL.
     NSSearchField*      _searchField;
+    /// Label shown when no items match the current view.
     NSTextField*        _emptyLabel;
+    /// Current display mode (bookmarks or history).
     SidePanelMode       _mode;
+    /// Filtered array based on search query.
     NSArray*            _filtered;
 }
 
+/**
+ * @brief   Returns the shared SidePanel singleton.
+ *
+ * @return  The singleton instance.
+ */
 + (instancetype)shared {
     static SidePanel* inst;
     static dispatch_once_t t;
@@ -28,6 +59,11 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     return inst;
 }
 
+/**
+ * @brief   Initialize the panel window.
+ *
+ * @return  An initialized SidePanel.
+ */
 - (instancetype)init {
     NSWindow* win = [[NSWindow alloc]
         initWithContentRect:NSMakeRect(0, 0, 340, 560)
@@ -44,12 +80,15 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     return self;
 }
 
+/**
+ * @brief   Build the panel UI: segmented control, search field, table, empty state.
+ */
 - (void)buildUI {
     NSView* root = self.window.contentView;
     root.wantsLayer = YES;
     CGFloat W = 340, H = 560;
 
-    // Frosted background
+    // Frosted background (sidebar material)
     NSVisualEffectView* bg = [[NSVisualEffectView alloc] initWithFrame:root.bounds];
     bg.material        = NSVisualEffectMaterialSidebar;
     bg.blendingMode    = NSVisualEffectBlendingModeWithinWindow;
@@ -57,7 +96,7 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     bg.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     [root addSubview:bg];
 
-    // Segment control — styled as a toolbar pill
+    // Segmented control — pill style for Bookmarks / History
     _segControl = [NSSegmentedControl
         segmentedControlWithLabels:@[@"Bookmarks", @"History"]
                       trackingMode:NSSegmentSwitchTrackingSelectOne
@@ -76,14 +115,14 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     _searchField.action = @selector(filterChanged:);
     [root addSubview:_searchField];
 
-    // Separator
+    // Separator below search
     NSView* sep = [[NSView alloc] initWithFrame:NSMakeRect(0, H - 100, W, 1)];
     sep.wantsLayer = YES;
     sep.layer.backgroundColor = [NSColor separatorColor].CGColor;
     sep.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
     [root addSubview:sep];
 
-    // Table
+    // Scrollable table
     NSScrollView* scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, W, H - 101)];
     scroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     scroll.hasVerticalScroller = YES;
@@ -119,8 +158,11 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     [self reloadData];
 }
 
-// ── Public ────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Public API
+// ───────────────────────────────────────────────────────────────────────────────
 
+/** @brief   Switch to Bookmarks mode and show the panel. */
 - (void)showBookmarks {
     _mode = ModeBookmarks;
     _segControl.selectedSegment = 0;
@@ -129,6 +171,7 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     [self.window makeKeyAndOrderFront:nil];
 }
 
+/** @brief   Switch to History mode and show the panel. */
 - (void)showHistory {
     _mode = ModeHistory;
     _segControl.selectedSegment = 1;
@@ -137,8 +180,13 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     [self.window makeKeyAndOrderFront:nil];
 }
 
-// ── Data ──────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Data
+// ───────────────────────────────────────────────────────────────────────────────
 
+/**
+ * @brief   Reload data from the appropriate source, apply search filter.
+ */
 - (void)reloadData {
     NSString* q = _searchField.stringValue.lowercaseString;
     NSArray* source = (_mode == ModeBookmarks)
@@ -162,17 +210,21 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     _emptyLabel.stringValue = emptyMsg;
 }
 
-// ── NSTableViewDataSource ─────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name NSTableViewDataSource
+// ───────────────────────────────────────────────────────────────────────────────
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView*)_ { return (NSInteger)_filtered.count; }
 
+/**
+ * @brief   Build a table cell with icon, title, URL/subtitle, and separator.
+ */
 - (NSView*)tableView:(NSTableView*)tv viewForTableColumn:(NSTableColumn*)_ row:(NSInteger)row {
     NSTableCellView* cell = [tv makeViewWithIdentifier:@"cell" owner:self];
     if (!cell) {
         cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 340, 56)];
         cell.identifier = @"cell";
 
-        // Icon background circle
         NSView* iconBg = [[NSView alloc] initWithFrame:NSMakeRect(12, 14, 28, 28)];
         iconBg.wantsLayer = YES;
         iconBg.layer.cornerRadius = 6;
@@ -200,7 +252,6 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
         urlLabel.identifier = @"urlLabel";
         [cell addSubview:urlLabel];
 
-        // Bottom separator
         NSView* rowSep = [[NSView alloc] initWithFrame:NSMakeRect(52, 0, 280, 1)];
         rowSep.wantsLayer = YES;
         rowSep.layer.backgroundColor = [NSColor separatorColor].CGColor;
@@ -222,9 +273,7 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
                 ? [NSString stringWithFormat:@"%@  -  %@", folder.length ? folder : @"Favorites", url]
                 : url;
         else if ([sub.identifier isEqualToString:@"iconBg"]) {
-            NSColor* c = isBookmark
-                ? [NSColor systemOrangeColor]
-                : [NSColor systemBlueColor];
+            NSColor* c = isBookmark ? [NSColor systemOrangeColor] : [NSColor systemBlueColor];
             ((NSView*)sub).layer.backgroundColor = c.CGColor;
             for (NSView* s2 in sub.subviews) {
                 if ([s2.identifier isEqualToString:@"icon"]) {
@@ -246,16 +295,21 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     return rv;
 }
 
-// ── Actions ───────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// @name Actions
+// ───────────────────────────────────────────────────────────────────────────────
 
+/// Switch between bookmarks and history mode.
 - (void)segChanged:(id)_ {
     _mode = (_segControl.selectedSegment == 0) ? ModeBookmarks : ModeHistory;
     [self.window setTitle:(_mode == ModeBookmarks) ? @"Bookmarks" : @"History"];
     [self reloadData];
 }
 
+/// Apply search filter.
 - (void)filterChanged:(id)_ { [self reloadData]; }
 
+/// Open the double-clicked item in a new tab via the callback.
 - (void)rowDoubleClicked:(id)_ {
     NSInteger row = _tableView.clickedRow;
     if (row < 0 || row >= (NSInteger)_filtered.count) return;
@@ -263,6 +317,11 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     if (url && self.openURLCallback) self.openURLCallback(url);
 }
 
+/**
+ * @brief   Build a context menu for right-click on table rows.
+ *
+ * @details In bookmarks mode, adds Edit Bookmark and Remove Bookmark items.
+ */
 - (NSMenu*)tableView:(NSTableView*)tv menuForEvent:(NSEvent*)ev {
     NSPoint pt  = [tv convertPoint:ev.locationInWindow fromView:nil];
     NSInteger row = [tv rowAtPoint:pt];
@@ -287,6 +346,7 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     return menu;
 }
 
+/// Open the selected item in a new tab.
 - (void)openSelected:(id)_ {
     NSInteger row = _tableView.selectedRow;
     if (row < 0 || row >= (NSInteger)_filtered.count) return;
@@ -294,6 +354,11 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     if (url && self.openURLCallback) self.openURLCallback(url);
 }
 
+/**
+ * @brief   Show an edit dialog for the selected bookmark.
+ *
+ * @details Allows editing title, URL, and folder fields.
+ */
 - (void)editSelected:(id)_ {
     NSInteger row = _tableView.selectedRow;
     if (row < 0 || row >= (NSInteger)_filtered.count || _mode != ModeBookmarks) return;
@@ -329,9 +394,9 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
         for (NSInteger i = 0; i < (NSInteger)bms.count; i++) {
             if ([bms[i].url isEqualToString:oldURL]) {
                 [[BookmarkManager profileShared] updateBookmarkAtIndex:i
-                                                                  title:titleField.stringValue
-                                                                    url:urlField.stringValue
-                                                                 folder:folderField.stringValue];
+                                                                   title:titleField.stringValue
+                                                                     url:urlField.stringValue
+                                                                  folder:folderField.stringValue];
                 break;
             }
         }
@@ -339,6 +404,7 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     }];
 }
 
+/// Delete the selected bookmark after confirmation.
 - (void)deleteSelected:(id)_ {
     NSInteger row = _tableView.selectedRow;
     if (row < 0 || row >= (NSInteger)_filtered.count) return;
@@ -351,4 +417,5 @@ typedef NS_ENUM(NSInteger, SidePanelMode) { ModeBookmarks, ModeHistory };
     }
     [self reloadData];
 }
+
 @end
