@@ -22,7 +22,10 @@ static NSString* const kDefaultBrowserPromptSeen = @"BuildBrowser.defaultBrowser
   [self buildMenu];
   [self applyApplicationIcon];
   
+  // Load the last session if available, otherwise open a new window
   Profile* p = [ProfileManager shared].activeProfile;
+  // If the session is invalid or missing, this will return an empty 
+  // dictionary and open a new window with the default homepage.
   NSDictionary* session = [self loadSession];
   NSArray* urls = [session[@"urls"] isKindOfClass:[NSArray class]] ? session[@"urls"] : nil;
   NSArray* pinned = [session[@"pinned"] isKindOfClass:[NSArray class]] ? session[@"pinned"] : nil;
